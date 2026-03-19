@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "datalathe"
+version = "1.0.0"
+description = "Python client for the Datalathe API"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "DataLathe" }]
+keywords = ["datalathe", "data", "profiling", "client"]
+dependencies = ["requests>=2.28.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0.0", "responses>=0.23.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/datalathe"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
