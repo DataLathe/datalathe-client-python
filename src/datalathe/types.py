@@ -9,8 +9,9 @@ class SourceType(str, Enum):
     MYSQL = "MYSQL"
     FILE = "FILE"
     S3 = "S3"
-    LOCAL = "LOCAL"
-    CACHE = "CACHE"
+    CHIP = "CHIP"
+    LOCAL = "CHIP"  # deprecated, use CHIP
+    CACHE = "CHIP"  # deprecated, use CHIP
 
 
 class ReportType(str, Enum):
@@ -164,6 +165,37 @@ class ChipsResponse:
     chips: list[Chip] = field(default_factory=list)
     metadata: list[ChipMetadata] = field(default_factory=list)
     tags: list[ChipTag] | None = None
+
+
+@dataclass
+class ConnectionInfo:
+    alias: str
+    host: str
+    port: str
+    database: str
+    user: str
+
+
+@dataclass
+class ConnectionRequest:
+    host: str
+    port: str
+    database: str
+    user: str
+    password: str
+
+
+@dataclass
+class ConnectionResponse:
+    alias: str
+    status: str | None = None
+    error: str | None = None
+
+
+@dataclass
+class LicenseStatus:
+    installed: bool
+    error: str | None = None
 
 
 def _to_dict(obj: Any) -> Any:

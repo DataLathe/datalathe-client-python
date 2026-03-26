@@ -16,8 +16,11 @@ from datalathe.types import (
     ChipMetadata,
     ChipTag,
     ChipsResponse,
+    ConnectionInfo,
+    ConnectionResponse,
     DatabaseTable,
     DuckDBDatabase,
+    LicenseStatus,
     Partition,
     ReportResultEntry,
     ReportTiming,
@@ -209,6 +212,70 @@ class DatalatheClient:
     def delete_chip(self, chip_id: str) -> None:
         self._delete(f"/lathe/chips/{quote(chip_id, safe='')}")
 
+    # --- S3 chip creation ---
+
+    def create_chip_from_s3(
+        self,
+        s3_path: str,
+        table_name: str | None = None,
+        chip_name: str | None = None,
+        column_replace: dict[str, str] | None = None,
+        storage_config: S3StorageConfig | None = None,
+    ) -> str:
+        chips = self.create_chips(
+            sources=[SourceRequest(
+                database_name="",
+                query="",
+                s3_path=s3_path,
+                table_name=table_name,
+                column_replace=column_replace,
+            )],
+            source_type=SourceType.S3,
+            chip_name=chip_name,
+            storage_config=storage_config,
+        )
+        return chips[0]
+
+    # --- Connection management ---
+
+    def list_connections(self) -> list[ConnectionInfo]:
+        data = self._get("/lathe/connections")
+        return [_from_dict(ConnectionInfo, d) for d in data]
+
+    def get_connection(self, alias: str) -> ConnectionInfo:
+        data = self._get(f"/lathe/connections/{quote(alias, safe='')}")
+        return _from_dict(ConnectionInfo, data)
+
+    def upsert_connection(
+        self,
+        alias: str,
+        host: str,
+        port: str,
+        database: str,
+        user: str,
+        password: str,
+    ) -> ConnectionResponse:
+        body = {"host": host, "port": port, "database": database, "user": user, "password": password}
+        data = self._put(f"/lathe/connections/{quote(alias, safe='')}", body)
+        return _from_dict(ConnectionResponse, data)
+
+    def delete_connection(self, alias: str) -> None:
+        self._delete(f"/lathe/connections/{quote(alias, safe='')}")
+
+    def test_connection(self, alias: str) -> ConnectionResponse:
+        data = self._post(f"/lathe/connections/{quote(alias, safe='')}/test", {})
+        return _from_dict(ConnectionResponse, data)
+
+    # --- License management ---
+
+    def get_license(self) -> LicenseStatus:
+        data = self._get("/lathe/license")
+        return _from_dict(LicenseStatus, data)
+
+    def put_license(self, license_key: str) -> LicenseStatus:
+        data = self._put("/lathe/license", {"license_key": license_key})
+        return _from_dict(LicenseStatus, data)
+
     # --- Query analysis ---
 
     def extract_tables(self, query: str) -> list[str]:
@@ -332,6 +399,22 @@ class DatalatheClient:
                 resp.status_code,
                 resp.text,
             )
+
+    def _put(self, path: str, body: Any) -> Any:
+        url = self._base_url + path
+        resp = self._session.put(
+            url,
+            json=body,
+            headers={"Content-Type": "application/json"},
+            timeout=self._timeout,
+        )
+        if not resp.ok:
+            raise DatalatheApiError(
+                f"PUT {path} failed: {resp.status_code} {resp.text}",
+                resp.status_code,
+                resp.text,
+            )
+        return resp.json()
 
     @staticmethod
     def _parse_chips_response(data: dict[str, Any]) -> ChipsResponse:
