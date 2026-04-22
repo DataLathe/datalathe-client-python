@@ -172,6 +172,43 @@ client.delete_chip_tag("chip-abc", "owner")
 client.delete_chip("chip-abc")
 ```
 
+## Chip Resolution
+
+`ChipResolver` automates the find-or-create chip workflow. Register table
+definitions once, then resolve chips or run full queries without manually
+managing chip lifecycle.
+
+```python
+from datalathe import DatalatheClient, ChipResolver, TableDef
+
+client = DatalatheClient("http://localhost:3000")
+
+resolver = ChipResolver(client, table_defs=[
+    TableDef("users", "select * from users", tenant_field="org_id"),
+    TableDef("orders", "select * from orders",
+             partitioned=True, partition_field="order_date",
+             tenant_field="org_id"),
+    TableDef("categories", "select * from categories"),
+])
+
+# Low-level: resolve chip IDs (finds cached chips, creates missing ones)
+chip_ids = resolver.resolve_chips(
+    tables=["users", "orders"],
+    partition_values=["2024-01-31"],
+    tenant_id="42",
+)
+
+# High-level: extract tables + resolve chips + run report in one call
+result = resolver.query(
+    sql="SELECT u.name, count(o.id) FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.name",
+    tenant_id="42",
+    partition_values=["2024-01-31"],
+)
+```
+
+The `query()` method automatically retries once on `ChipNotFoundError` (expired
+chips). Disable with `retry_on_expired=False`.
+
 ## SQL Analysis
 
 ```python

@@ -198,6 +198,40 @@ class LicenseStatus:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class TableDef:
+    """Describes a database table that DataLathe can cache as a chip.
+
+    Used by ``ChipResolver`` to know how to create chips for tables referenced
+    in SQL queries.  Partitioned tables produce one chip per partition value;
+    unpartitioned tables produce a single chip per tenant.
+
+    ``sql`` must not contain a ``WHERE`` clause — tenant and partition filters
+    are appended automatically by ``ChipResolver``.
+    """
+
+    table_name: str
+    sql: str
+    source_name: str = "database"
+    source_type: SourceType = SourceType.MYSQL
+    partitioned: bool = False
+    partition_field: str | None = None
+    tenant_field: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.partitioned and not self.partition_field:
+            raise ValueError(
+                f"TableDef '{self.table_name}': "
+                "partition_field is required when partitioned=True"
+            )
+        if "where" in self.sql.lower():
+            raise ValueError(
+                f"TableDef '{self.table_name}': "
+                "sql must not contain a WHERE clause — "
+                "tenant and partition filters are appended automatically"
+            )
+
+
 def _to_dict(obj: Any) -> Any:
     """Recursively convert dataclasses/enums to JSON-serializable dicts."""
     if isinstance(obj, Enum):
