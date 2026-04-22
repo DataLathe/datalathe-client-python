@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -10,7 +11,29 @@ from datalathe.commands.command import DatalatheCommand
 from datalathe.commands.create_chip import CreateChipCommand
 from datalathe.commands.extract_tables import ExtractTablesCommand
 from datalathe.commands.generate_report import GenerateReportCommand
-from datalathe.errors import DatalatheApiError, DatalatheStageError
+from datalathe.errors import ChipNotFoundError, DatalatheApiError, DatalatheStageError
+
+
+def _raise_for_failure(method: str, path: str, resp: requests.Response) -> None:
+    """Inspects a failed HTTP response and raises the most specific exception
+    available. Falls back to DatalatheApiError for unrecognized failures."""
+    body = resp.text
+    if resp.status_code == 404 and body:
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("error_code") == "chip_not_found":
+            raise ChipNotFoundError(
+                parsed.get("error") or "Chip not available",
+                parsed.get("chip_id"),
+                body,
+            )
+    raise DatalatheApiError(
+        f"{method} {path} failed: {resp.status_code} {body}",
+        resp.status_code,
+        body,
+    )
 from datalathe.types import (
     Chip,
     ChipMetadata,
@@ -186,6 +209,13 @@ class DatalatheClient:
     def list_chips(self) -> ChipsResponse:
         return self._parse_chips_response(self._get("/lathe/chips"))
 
+    def get_chip(self, chip_id: str) -> ChipsResponse:
+        """Fetches a single chip (with sub-chips, metadata, and tags) by ID.
+        Raises ChipNotFoundError if the chip does not exist."""
+        return self._parse_chips_response(
+            self._get(f"/lathe/chips/{quote(chip_id, safe='')}")
+        )
+
     def search_chips(
         self,
         table_name: str | None = None,
@@ -314,11 +344,7 @@ class DatalatheClient:
             timeout=self._timeout,
         )
         if not resp.ok:
-            raise DatalatheApiError(
-                f"Failed to execute command: {resp.status_code} {resp.text}",
-                resp.status_code,
-                resp.text,
-            )
+            _raise_for_failure("POST", command.endpoint, resp)
         return command.parse_response(resp.json())
 
     # --- Profiler methods ---
@@ -367,11 +393,7 @@ class DatalatheClient:
         url = self._base_url + path
         resp = self._session.get(url, timeout=self._timeout)
         if not resp.ok:
-            raise DatalatheApiError(
-                f"GET {path} failed: {resp.status_code} {resp.text}",
-                resp.status_code,
-                resp.text,
-            )
+            _raise_for_failure("GET", path, resp)
         return resp.json()
 
     def _post(self, path: str, body: Any) -> Any:
@@ -383,22 +405,14 @@ class DatalatheClient:
             timeout=self._timeout,
         )
         if not resp.ok:
-            raise DatalatheApiError(
-                f"POST {path} failed: {resp.status_code} {resp.text}",
-                resp.status_code,
-                resp.text,
-            )
+            _raise_for_failure("POST", path, resp)
         return resp.json()
 
     def _delete(self, path: str) -> None:
         url = self._base_url + path
         resp = self._session.delete(url, timeout=self._timeout)
         if not resp.ok:
-            raise DatalatheApiError(
-                f"DELETE {path} failed: {resp.status_code} {resp.text}",
-                resp.status_code,
-                resp.text,
-            )
+            _raise_for_failure("DELETE", path, resp)
 
     def _put(self, path: str, body: Any) -> Any:
         url = self._base_url + path
@@ -409,11 +423,7 @@ class DatalatheClient:
             timeout=self._timeout,
         )
         if not resp.ok:
-            raise DatalatheApiError(
-                f"PUT {path} failed: {resp.status_code} {resp.text}",
-                resp.status_code,
-                resp.text,
-            )
+            _raise_for_failure("PUT", path, resp)
         return resp.json()
 
     @staticmethod
