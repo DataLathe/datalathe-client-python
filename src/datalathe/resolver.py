@@ -5,7 +5,7 @@ import re
 
 from datalathe.client import DatalatheClient, GenerateReportResult
 from datalathe.errors import ChipNotFoundError
-from datalathe.types import Partition, SourceRequest, TableDef
+from datalathe.types import Partition, S3StorageConfig, SourceRequest, TableDef
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +70,11 @@ class ChipResolver:
         client: DatalatheClient,
         table_defs: list[TableDef] | None = None,
         tag_key: str = "tenant",
+        storage_config: S3StorageConfig | None = None,
     ) -> None:
         self._client = client
         self._tag_key = tag_key
+        self._storage_config = storage_config
         self._table_defs: dict[str, TableDef] = {}
         for td in table_defs or []:
             self._table_defs[td.table_name] = td
@@ -177,6 +179,7 @@ class ChipResolver:
                 )],
                 source_type=td.source_type,
                 tags=tags,
+                storage_config=self._storage_config,
             )
             created_ids.extend(ids)
 
@@ -211,6 +214,7 @@ class ChipResolver:
                     )],
                     source_type=td.source_type,
                     tags=tags,
+                    storage_config=self._storage_config,
                 )
                 created_ids.extend(ids)
 
