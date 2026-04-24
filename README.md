@@ -238,7 +238,7 @@ client = DatalatheClient(
 ## Error Handling
 
 ```python
-from datalathe import DatalatheApiError, DatalatheStageError
+from datalathe import DatalatheApiError, DatalatheStageError, ChipNotFoundError
 
 try:
     chip_id = client.create_chip("bad_db", "SELECT 1", "test")
@@ -246,6 +246,14 @@ except DatalatheStageError as e:
     print(f"Staging failed: {e}")
 except DatalatheApiError as e:
     print(f"API error {e.status_code}: {e.response_body}")
+
+# ChipNotFoundError is raised when a referenced chip has expired or been deleted.
+# ChipResolver.query() retries it automatically; handle it directly when
+# calling generate_report() with cached chip IDs.
+try:
+    report = client.generate_report(["chip-abc"], ["SELECT count(*) FROM users"])
+except ChipNotFoundError as e:
+    print(f"Chip {e.chip_id} no longer exists, recreate it")
 ```
 
 ## Requirements
