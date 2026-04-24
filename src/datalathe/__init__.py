@@ -19,6 +19,7 @@ from datalathe.types import (
     ChipMetadata,
     ChipTag,
     ChipsResponse,
+    TableDef,
 )
 from datalathe.errors import ChipNotFoundError, DatalatheError, DatalatheApiError, DatalatheStageError
 from datalathe.commands.command import DatalatheCommand
@@ -26,6 +27,7 @@ from datalathe.commands.create_chip import CreateChipCommand
 from datalathe.commands.generate_report import GenerateReportCommand
 from datalathe.commands.extract_tables import ExtractTablesCommand
 from datalathe.results.result_set import DatalatheResultSet
+from datalathe.resolver import ChipResolver
 
 __all__ = [
     "DatalatheClient",
@@ -49,6 +51,7 @@ __all__ = [
     "ChipMetadata",
     "ChipTag",
     "ChipsResponse",
+    "TableDef",
     "DatalatheError",
     "DatalatheApiError",
     "DatalatheStageError",
@@ -58,4 +61,5 @@ __all__ = [
     "GenerateReportCommand",
     "ExtractTablesCommand",
     "DatalatheResultSet",
+    "ChipResolver",
 ]
