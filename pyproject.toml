@@ -20,3 +20,7 @@ packages = ["src/datalathe"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: requires a running engine (DATALATHE_URL); skipped by default",
+]
+addopts = "-m 'not integration'"
