@@ -4,7 +4,7 @@ import time
 import pytest
 
 from datalathe import DatalatheClient
-from datalathe.errors import ChipNotFoundError
+from datalathe.errors import ChipNotFoundError, DatalatheApiError
 
 
 @pytest.fixture(scope="session")
@@ -31,5 +31,5 @@ def unique_chip_id(client: DatalatheClient):
     yield chip_id
     try:
         client.delete_chip(chip_id)
-    except ChipNotFoundError:
+    except (ChipNotFoundError, DatalatheApiError):
         pass
