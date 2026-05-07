@@ -4,6 +4,7 @@ import time
 import pytest
 
 from datalathe import DatalatheClient
+from datalathe.errors import ChipNotFoundError
 
 
 @pytest.fixture(scope="session")
@@ -14,7 +15,7 @@ def datalathe_url() -> str:
     return url
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def csv_path() -> str:
     return os.environ.get("E2E_CSV_PATH", "/tmp/test-data.csv")
 
@@ -25,5 +26,10 @@ def client(datalathe_url: str) -> DatalatheClient:
 
 
 @pytest.fixture
-def unique_chip_id() -> str:
-    return f"int-py-{int(time.time() * 1000)}-{os.getpid()}"
+def unique_chip_id(client: DatalatheClient):
+    chip_id = f"int-py-{int(time.time() * 1000)}-{os.getpid()}"
+    yield chip_id
+    try:
+        client.delete_chip(chip_id)
+    except ChipNotFoundError:
+        pass

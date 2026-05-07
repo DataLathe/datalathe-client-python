@@ -12,7 +12,6 @@ def test_chip_lifecycle(client, csv_path, unique_chip_id):
     chip_id = unique_chip_id
     table_name = "stage_test"
 
-    # create_chip_from_file generates its own chip_id; use create_chips to pin ours.
     client.create_chips(
         sources=[SourceRequest(database_name="", query="", file_path=csv_path, table_name=table_name)],
         source_type=SourceType.FILE,
@@ -29,6 +28,7 @@ def test_chip_lifecycle(client, csv_path, unique_chip_id):
         chip_ids=[chip_id],
         queries=[f"SELECT COUNT(*) FROM {table_name}"],
     )
+    assert 0 in report.results, f"expected key 0 in report.results, got keys: {list(report.results.keys())}"
     entry = report.results[0]
     cell = entry.result[0][0]
     assert str(cell) == "5", f"expected COUNT(*)=5, got {cell!r}"
