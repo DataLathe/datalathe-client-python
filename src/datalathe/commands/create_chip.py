@@ -45,4 +45,6 @@ class CreateChipCommand:
         return StageDataResponse(
             chip_id=json_data["chip_id"],
             error=json_data.get("error"),
+            total_rows=json_data.get("total_rows"),
+            elapsed_ms=json_data.get("elapsed_ms"),
         )
