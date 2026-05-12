@@ -169,6 +169,10 @@ class ChipsResponse:
     chips: list[Chip] = field(default_factory=list)
     metadata: list[ChipMetadata] = field(default_factory=list)
     tags: list[ChipTag] | None = None
+    #: Chip IDs whose metadata could not be read back from the chip-manager.
+    #: Always populated by v1.7.1+ engines (empty list when none); empty on
+    #: older engines that don't emit the field.
+    unreadable_chip_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
