@@ -448,4 +448,10 @@ class DatalatheClient:
         tags = None
         if data.get("tags") is not None:
             tags = [_from_dict(ChipTag, t) for t in data["tags"]]
-        return ChipsResponse(chips=chips, metadata=metadata, tags=tags)
+        unreadable_chip_ids = list(data.get("unreadable_chip_ids", []))
+        return ChipsResponse(
+            chips=chips,
+            metadata=metadata,
+            tags=tags,
+            unreadable_chip_ids=unreadable_chip_ids,
+        )

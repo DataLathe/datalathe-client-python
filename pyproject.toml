@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datalathe"
-version = "1.2.1"
+version = "1.2.2"
 description = "Python client for the Datalathe API"
 requires-python = ">=3.10"
 license = "MIT"
