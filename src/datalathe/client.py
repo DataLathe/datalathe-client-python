@@ -34,6 +34,21 @@ def _raise_for_failure(method: str, path: str, resp: requests.Response) -> None:
         resp.status_code,
         body,
     )
+
+
+def _parse_json(method: str, path: str, resp: requests.Response) -> Any:
+    """Parses a successful response body as JSON. An empty or non-JSON body is a
+    server-side fault, not data — surface it as DatalatheApiError, never a raw
+    JSONDecodeError."""
+    try:
+        return resp.json()
+    except (json.JSONDecodeError, ValueError):
+        body = resp.text
+        raise DatalatheApiError(
+            f"{method} {path} returned a {resp.status_code} with a non-JSON body: {body!r}",
+            resp.status_code,
+            body,
+        )
 from datalathe.types import (
     Chip,
     ChipMetadata,
@@ -345,7 +360,7 @@ class DatalatheClient:
         )
         if not resp.ok:
             _raise_for_failure("POST", command.endpoint, resp)
-        return command.parse_response(resp.json())
+        return command.parse_response(_parse_json("POST", command.endpoint, resp))
 
     # --- Profiler methods ---
 
@@ -394,7 +409,7 @@ class DatalatheClient:
         resp = self._session.get(url, timeout=self._timeout)
         if not resp.ok:
             _raise_for_failure("GET", path, resp)
-        return resp.json()
+        return _parse_json("GET", path, resp)
 
     def _post(self, path: str, body: Any) -> Any:
         url = self._base_url + path
@@ -406,7 +421,7 @@ class DatalatheClient:
         )
         if not resp.ok:
             _raise_for_failure("POST", path, resp)
-        return resp.json()
+        return _parse_json("POST", path, resp)
 
     def _delete(self, path: str) -> None:
         url = self._base_url + path
@@ -424,7 +439,7 @@ class DatalatheClient:
         )
         if not resp.ok:
             _raise_for_failure("PUT", path, resp)
-        return resp.json()
+        return _parse_json("PUT", path, resp)
 
     @staticmethod
     def _parse_chips_response(data: dict[str, Any]) -> ChipsResponse:
