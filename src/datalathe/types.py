@@ -43,6 +43,8 @@ class SourceRequest:
     source_chip_ids: list[str] | None = None
     partition: Partition | None = None
     column_replace: dict[str, str] | None = None
+    streaming: bool | None = None
+    partition_column: str | None = None
 
 
 @dataclass
@@ -66,6 +68,8 @@ class StageDataRequest:
 class StageDataResponse:
     chip_id: str
     error: str | None = None
+    total_rows: int | None = None
+    elapsed_ms: int | None = None
 
 
 @dataclass
