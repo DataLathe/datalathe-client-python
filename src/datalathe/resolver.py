@@ -78,9 +78,50 @@ class ChipResolver:
         self._table_defs: dict[str, TableDef] = {}
         for td in table_defs or []:
             self._table_defs[td.table_name] = td
+        self._global_chip_ids: dict[str, str] = {}
 
     def add_table(self, table_def: TableDef) -> None:
         self._table_defs[table_def.table_name] = table_def
+
+    def register_prewarmed_chip(self, table_name: str, chip_id: str) -> None:
+        """Register a chip that was created externally.
+
+        The chip ID is cached the same way as ``warm_global_chips``
+        entries — ``resolve_chips`` will reuse it instead of creating a
+        new chip for *table_name*.
+        """
+        self._global_chip_ids[table_name] = chip_id
+
+    def warm_global_chips(self) -> list[str]:
+        """Pre-create chips for all tables without a tenant_field.
+
+        These chips contain identical data regardless of tenant, so they only
+        need to be created once. Their IDs are cached and reused in all
+        subsequent ``resolve_chips`` / ``query`` calls, skipping redundant
+        chip creation.
+
+        Returns:
+            List of chip IDs created (or already cached).
+        """
+        created: list[str] = []
+        for td in self._table_defs.values():
+            if td.tenant_field or td.table_name in self._global_chip_ids:
+                continue
+            logger.info("Warming global chip for table '%s'", td.table_name)
+            ids = self._client.create_chips(
+                sources=[SourceRequest(
+                    database_name=td.source_name,
+                    table_name=td.table_name,
+                    query=td.sql,
+                )],
+                source_type=td.source_type,
+                tags={self._tag_key: "global"},
+                storage_config=self._storage_config,
+            )
+            self._global_chip_ids[td.table_name] = ids[0]
+            created.append(ids[0])
+        logger.info("Warmed %d global chips", len(created))
+        return created
 
     def resolve_chips(
         self,
@@ -115,6 +156,7 @@ class ChipResolver:
         for pv in partition_values:
             _validate_value(pv, "partition_value")
 
+        global_ids: list[str] = []
         partitioned_tables: set[str] = set()
         unpartitioned_tables: set[str] = set()
         for table in tables:
@@ -126,6 +168,9 @@ class ChipResolver:
                     "register it via the table_defs constructor argument "
                     "or add_table()"
                 )
+            if table in self._global_chip_ids:
+                global_ids.append(self._global_chip_ids[table])
+                continue
             if td.partitioned:
                 partitioned_tables.add(table)
             else:
@@ -136,7 +181,7 @@ class ChipResolver:
         existing_unpartitioned_ids: list[str] = []
         existing_partitioned_ids: list[str] = []
 
-        if not force_recreate:
+        if not force_recreate and (unpartitioned_tables or partitioned_tables):
             tag = f"{self._tag_key}:{tenant_id}"
             existing = self._client.search_chips(tag=tag)
             pv_set = set(partition_values)
@@ -219,13 +264,15 @@ class ChipResolver:
                 created_ids.extend(ids)
 
         all_ids = (
-            existing_unpartitioned_ids
+            global_ids
+            + existing_unpartitioned_ids
             + existing_partitioned_ids
             + created_ids
         )
         logger.info(
-            "Resolved %d chips (%d existing, %d created)",
+            "Resolved %d chips (%d global, %d existing, %d created)",
             len(all_ids),
+            len(global_ids),
             len(existing_unpartitioned_ids) + len(existing_partitioned_ids),
             len(created_ids),
         )
