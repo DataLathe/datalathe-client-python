@@ -238,7 +238,12 @@ client = DatalatheClient(
 ## Error Handling
 
 ```python
-from datalathe import DatalatheApiError, DatalatheStageError, ChipNotFoundError
+from datalathe import (
+    DatalatheApiError,
+    DatalatheStageError,
+    ChipNotFoundError,
+    DatalatheQueryError,
+)
 
 try:
     chip_id = client.create_chip("bad_db", "SELECT 1", "test")
@@ -254,6 +259,23 @@ try:
     report = client.generate_report(["chip-abc"], ["SELECT count(*) FROM users"])
 except ChipNotFoundError as e:
     print(f"Chip {e.chip_id} no longer exists, recreate it")
+
+# A query that fails at execution time (bad column, type mismatch, an
+# untranslated function) comes back from the engine HTTP 200 with the error
+# in the per-query result. generate_report() and ChipResolver.query() raise
+# DatalatheQueryError on that by default so it is not mistaken for 0 rows.
+try:
+    report = client.generate_report(["chip-abc"], ["SELECT bogus FROM users"])
+except DatalatheQueryError as e:
+    print(f"Query failed: {e.errors}")  # {0: "Binder Error: ..."}
+
+# Pass raise_on_query_error=False to inspect per-query errors yourself.
+report = client.generate_report(
+    ["chip-abc"], ["SELECT bogus FROM users"], raise_on_query_error=False,
+)
+for idx, entry in report.results.items():
+    if entry.error:
+        print(f"Query {idx} failed: {entry.error}")
 ```
 
 ## Requirements
