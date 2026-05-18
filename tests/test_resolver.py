@@ -13,6 +13,7 @@ from datalathe import (
     ChipResolver,
     DatalatheApiError,
     DatalatheClient,
+    DatalatheQueryError,
     TableDef,
 )
 
@@ -694,3 +695,58 @@ def test_query_propagates_extract_tables_error() -> None:
         resolver.query("INVALID SQL", tenant_id="42")
 
     assert exc_info.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# query — per-query execution errors
+# ---------------------------------------------------------------------------
+
+def _failed_report_response(error: str) -> dict[str, Any]:
+    return {
+        "result": {"0": {"idx": "0", "result": None, "error": error, "schema": None}},
+        "timing": {"total_ms": 5.0, "chip_attach_ms": 1.0, "query_execution_ms": 4.0},
+    }
+
+
+def _resolver_for_failed_query(error: str) -> ChipResolver:
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/query/tables",
+        json=_extract_response(["users"], "SELECT transformed"),
+    )
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([
+            {"chip_id": "c_users", "sub_chip_id": "c_users",
+             "table_name": "users", "partition_value": ""},
+        ]),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/report",
+        json=_failed_report_response(error),
+    )
+    return ChipResolver(DatalatheClient(BASE), table_defs=[USERS_DEF])
+
+
+@responses.activate
+def test_query_raises_on_failed_query() -> None:
+    resolver = _resolver_for_failed_query("Catalog Error: column missing")
+
+    with pytest.raises(DatalatheQueryError) as exc_info:
+        resolver.query("SELECT name FROM users", tenant_id="42")
+
+    assert exc_info.value.errors == {0: "Catalog Error: column missing"}
+
+
+@responses.activate
+def test_query_opt_out_returns_failed_entry() -> None:
+    resolver = _resolver_for_failed_query("Catalog Error: column missing")
+
+    result = resolver.query(
+        "SELECT name FROM users", tenant_id="42", raise_on_query_error=False,
+    )
+
+    assert result.results[0].error == "Catalog Error: column missing"
+    assert result.results[0].result is None

@@ -15,6 +15,22 @@ class DatalatheStageError(DatalatheError):
         super().__init__(message)
 
 
+class DatalatheQueryError(DatalatheError):
+    """Raised when one or more queries in a generate_report call fail at
+    execution time. The engine returns HTTP 200 with these errors in the
+    per-query `error` field; without this exception they would be silently
+    swallowed as empty results.
+
+    Pass ``raise_on_query_error=False`` to generate_report to suppress this
+    and inspect ``ReportResultEntry.error`` on the returned result instead.
+    """
+
+    def __init__(self, errors: dict[int, str]):
+        self.errors = errors
+        detail = "; ".join(f"query {idx}: {msg}" for idx, msg in sorted(errors.items()))
+        super().__init__(f"Query execution failed ({detail})")
+
+
 class ChipNotFoundError(DatalatheApiError):
     """Raised when a request references a chip whose data is no longer available
     (typically because the underlying S3 object has expired via lifecycle policy).

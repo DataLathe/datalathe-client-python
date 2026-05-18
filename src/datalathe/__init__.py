@@ -21,7 +21,13 @@ from datalathe.types import (
     ChipsResponse,
     TableDef,
 )
-from datalathe.errors import ChipNotFoundError, DatalatheError, DatalatheApiError, DatalatheStageError
+from datalathe.errors import (
+    ChipNotFoundError,
+    DatalatheError,
+    DatalatheApiError,
+    DatalatheQueryError,
+    DatalatheStageError,
+)
 from datalathe.commands.command import DatalatheCommand
 from datalathe.commands.create_chip import CreateChipCommand
 from datalathe.commands.generate_report import GenerateReportCommand
@@ -55,6 +61,7 @@ __all__ = [
     "DatalatheError",
     "DatalatheApiError",
     "DatalatheStageError",
+    "DatalatheQueryError",
     "ChipNotFoundError",
     "DatalatheCommand",
     "CreateChipCommand",

@@ -238,6 +238,7 @@ class ChipResolver:
         partition_values: list[str] | None = None,
         retry_on_expired: bool = True,
         transform: bool = True,
+        raise_on_query_error: bool = True,
     ) -> GenerateReportResult:
         """Execute a SQL query through the full DataLathe pipeline.
 
@@ -252,6 +253,9 @@ class ChipResolver:
                 re-resolve chips and retry once when a
                 ``ChipNotFoundError`` is raised.
             transform: Whether to request MySQL-to-DuckDB SQL transformation.
+            raise_on_query_error: If ``True`` (the default), raise
+                ``DatalatheQueryError`` when a query fails at execution time.
+                Set ``False`` to inspect ``ReportResultEntry.error`` instead.
 
         Returns:
             The ``GenerateReportResult`` from ``generate_report``.
@@ -261,6 +265,8 @@ class ChipResolver:
                 tables, or if chip resolution fails validation.
             ChipNotFoundError: If a chip has expired and *retry_on_expired*
                 is ``False``, or if the retry also fails.
+            DatalatheQueryError: If a query fails at execution time and
+                *raise_on_query_error* is ``True``.
             DatalatheApiError: On any other API failure.
         """
         pv = partition_values or []
@@ -284,6 +290,7 @@ class ChipResolver:
         try:
             result = self._client.generate_report(
                 chip_ids, [transformed_query],
+                raise_on_query_error=raise_on_query_error,
             )
         except ChipNotFoundError:
             if not retry_on_expired:
@@ -296,6 +303,7 @@ class ChipResolver:
             )
             result = self._client.generate_report(
                 chip_ids, [transformed_query],
+                raise_on_query_error=raise_on_query_error,
             )
 
         return result

@@ -11,7 +11,12 @@ from datalathe.commands.command import DatalatheCommand
 from datalathe.commands.create_chip import CreateChipCommand
 from datalathe.commands.extract_tables import ExtractTablesCommand
 from datalathe.commands.generate_report import GenerateReportCommand
-from datalathe.errors import ChipNotFoundError, DatalatheApiError, DatalatheStageError
+from datalathe.errors import (
+    ChipNotFoundError,
+    DatalatheApiError,
+    DatalatheQueryError,
+    DatalatheStageError,
+)
 
 
 def _raise_for_failure(method: str, path: str, resp: requests.Response) -> None:
@@ -194,6 +199,7 @@ class DatalatheClient:
         source_type: SourceType = SourceType.LOCAL,
         transform_query: bool | None = None,
         return_transformed_query: bool | None = None,
+        raise_on_query_error: bool = True,
     ) -> GenerateReportResult:
         command = GenerateReportCommand(
             chip_ids=chip_ids,
@@ -207,6 +213,12 @@ class DatalatheClient:
         if response.result:
             for key, entry in response.result.items():
                 results[int(key)] = entry
+        if raise_on_query_error:
+            query_errors = {
+                idx: entry.error for idx, entry in results.items() if entry.error
+            }
+            if query_errors:
+                raise DatalatheQueryError(query_errors)
         return GenerateReportResult(results=results, timing=response.timing)
 
     # --- Database inspection ---
