@@ -44,7 +44,7 @@ class SourceRequest:
     partition: Partition | None = None
     column_replace: dict[str, str] | None = None
     streaming: bool | None = None
-    partition_column: str | None = None
+    keyset_column: str | None = None
 
 
 @dataclass
