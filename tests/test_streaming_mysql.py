@@ -1,7 +1,7 @@
 """Tests for v1.7 streaming MySQL ingest fields.
 
 Covers:
-- SourceRequest.streaming and SourceRequest.partition_column serialization
+- SourceRequest.streaming and SourceRequest.keyset_column serialization
 - StageDataResponse.total_rows and StageDataResponse.elapsed_ms deserialization
 - Omission of optional fields when None (clean wire shape)
 """
@@ -23,26 +23,26 @@ BASE = "http://localhost:8080"
 # SourceRequest serialization
 # ---------------------------------------------------------------------------
 
-def test_source_request_includes_streaming_and_partition_column_when_set() -> None:
+def test_source_request_includes_streaming_and_keyset_column_when_set() -> None:
     req = SourceRequest(
         database_name="mydb",
         query="SELECT * FROM orders",
         streaming=True,
-        partition_column="id",
+        keyset_column="id",
     )
     d = _to_dict(req)
     assert d["streaming"] is True
-    assert d["partition_column"] == "id"
+    assert d["keyset_column"] == "id"
 
 
-def test_source_request_omits_streaming_and_partition_column_when_none() -> None:
+def test_source_request_omits_streaming_and_keyset_column_when_none() -> None:
     req = SourceRequest(
         database_name="mydb",
         query="SELECT * FROM orders",
     )
     d = _to_dict(req)
     assert "streaming" not in d
-    assert "partition_column" not in d
+    assert "keyset_column" not in d
 
 
 def test_source_request_streaming_false_is_included() -> None:
@@ -104,7 +104,7 @@ def test_create_chip_sends_streaming_fields_on_wire() -> None:
             database_name="mydb",
             query="SELECT * FROM orders",
             streaming=True,
-            partition_column="id",
+            keyset_column="id",
         )],
         source_type=SourceType.MYSQL,
     )[0]
@@ -113,7 +113,7 @@ def test_create_chip_sends_streaming_fields_on_wire() -> None:
     assert len(captured) == 1
     src = captured[0]["source_request"]
     assert src["streaming"] is True
-    assert src["partition_column"] == "id"
+    assert src["keyset_column"] == "id"
 
 
 @responses.activate
@@ -140,4 +140,32 @@ def test_create_chip_omits_streaming_fields_when_not_set() -> None:
 
     src = captured[0]["source_request"]
     assert "streaming" not in src
-    assert "partition_column" not in src
+    assert "keyset_column" not in src
+
+
+@responses.activate
+def test_create_chip_from_s3_sends_partition_on_wire() -> None:
+    captured: list[dict] = []
+
+    def _capture(request):  # type: ignore[no-untyped-def]
+        captured.append(json.loads(request.body))
+        return (200, {}, json.dumps({"chip_id": "chip-s3-part"}))
+
+    responses.add_callback(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        callback=_capture,
+        content_type="application/json",
+    )
+
+    from datalathe.types import Partition
+    client = DatalatheClient(BASE)
+    client.create_chip_from_s3(
+        "s3://bucket/data.parquet",
+        "sales",
+        partition=Partition(partition_by="region"),
+    )
+
+    src = captured[0]["source_request"]
+    assert src["s3_path"] == "s3://bucket/data.parquet"
+    assert src["partition"]["partition_by"] == "region"

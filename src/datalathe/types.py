@@ -44,7 +44,7 @@ class SourceRequest:
     partition: Partition | None = None
     column_replace: dict[str, str] | None = None
     streaming: bool | None = None
-    partition_column: str | None = None
+    keyset_column: str | None = None
 
 
 @dataclass
@@ -155,6 +155,7 @@ class ChipMetadata:
     storage_bucket: str | None = None
     storage_key_prefix: str | None = None
     ttl_days: int | None = None
+    partition_column: str | None = None
 
 
 @dataclass
