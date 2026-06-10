@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _SAFE_VALUE_RE = re.compile(r"^[A-Za-z0-9 _.:-]{1,128}$")
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+_GLOBAL_TENANT = "global"
 
 
 def _validate_value(value: str, label: str) -> str:
@@ -83,45 +84,97 @@ class ChipResolver:
     def add_table(self, table_def: TableDef) -> None:
         self._table_defs[table_def.table_name] = table_def
 
+    @staticmethod
+    def _global_ineligibility(td: TableDef) -> str | None:
+        if td.tenant_field:
+            return "has a tenant_field"
+        if td.partitioned:
+            return "is partitioned"
+        return None
+
     def register_prewarmed_chip(self, table_name: str, chip_id: str) -> None:
         """Register a chip that was created externally.
 
         The chip ID is cached the same way as ``warm_global_chips``
         entries — ``resolve_chips`` will reuse it instead of creating a
         new chip for *table_name*.
+
+        Raises:
+            ValueError: If *table_name* has no registered ``TableDef``, or if
+                its ``TableDef`` has a ``tenant_field`` or is partitioned —
+                global chips are served to every tenant for every partition
+                value, so caching such tables would leak or misshape data.
         """
+        td = self._table_defs.get(table_name)
+        if td is None:
+            raise ValueError(
+                f"No TableDef registered for table {table_name!r} — "
+                "register it via the table_defs constructor argument "
+                "or add_table()"
+            )
+        reason = self._global_ineligibility(td)
+        if reason:
+            raise ValueError(
+                f"Table {table_name!r} {reason} and cannot be cached as a "
+                "global chip — global chips are shared across all tenants "
+                "and partition values"
+            )
         self._global_chip_ids[table_name] = chip_id
 
     def warm_global_chips(self) -> list[str]:
-        """Pre-create chips for all tables without a tenant_field.
+        """Pre-create chips for tables with no tenant_field and no partitions.
 
         These chips contain identical data regardless of tenant, so they only
         need to be created once. Their IDs are cached and reused in all
         subsequent ``resolve_chips`` / ``query`` calls, skipping redundant
-        chip creation.
+        chip creation. Existing chips tagged ``{tag_key}: global`` are adopted
+        instead of recreated, so warming is idempotent across restarts.
 
         Returns:
-            List of chip IDs created (or already cached).
+            List of chip IDs newly created by this call.
         """
+        eligible = [
+            td for td in self._table_defs.values()
+            if self._global_ineligibility(td) is None
+            and td.table_name not in self._global_chip_ids
+        ]
         created: list[str] = []
-        for td in self._table_defs.values():
-            if td.tenant_field or td.table_name in self._global_chip_ids:
+        if not eligible:
+            return created
+
+        existing = self._client.search_chips(
+            tag=f"{self._tag_key}:{_GLOBAL_TENANT}",
+        )
+        eligible_names = {td.table_name for td in eligible}
+        for chip in existing.chips:
+            if (
+                chip.table_name in eligible_names
+                and chip.chip_id == chip.sub_chip_id
+                and chip.table_name not in self._global_chip_ids
+            ):
+                self._global_chip_ids[chip.table_name] = chip.chip_id
+
+        for td in eligible:
+            if td.table_name in self._global_chip_ids:
                 continue
-            logger.info("Warming global chip for table '%s'", td.table_name)
-            ids = self._client.create_chips(
-                sources=[SourceRequest(
-                    database_name=td.source_name,
-                    table_name=td.table_name,
-                    query=td.sql,
-                )],
-                source_type=td.source_type,
-                tags={self._tag_key: "global"},
-                storage_config=self._storage_config,
-            )
-            self._global_chip_ids[td.table_name] = ids[0]
-            created.append(ids[0])
+            created.append(self._create_global_chip(td))
         logger.info("Warmed %d global chips", len(created))
         return created
+
+    def _create_global_chip(self, td: TableDef) -> str:
+        logger.info("Warming global chip for table '%s'", td.table_name)
+        ids = self._client.create_chips(
+            sources=[SourceRequest(
+                database_name=td.source_name,
+                table_name=td.table_name,
+                query=td.sql,
+            )],
+            source_type=td.source_type,
+            tags={self._tag_key: _GLOBAL_TENANT},
+            storage_config=self._storage_config,
+        )
+        self._global_chip_ids[td.table_name] = ids[0]
+        return ids[0]
 
     def resolve_chips(
         self,
@@ -138,8 +191,10 @@ class ChipResolver:
             partition_values: Partition values (e.g. data dates) required for
                 partitioned tables.
             tenant_id: Tenant identifier used for tag-based chip isolation.
+                The value ``"global"`` is reserved for global chips.
             force_recreate: When ``True``, skip the cache search and create
-                fresh chips for all tables.  Useful after a
+                fresh chips for all tables; globally cached chips are also
+                recreated and their cache entries refreshed.  Useful after a
                 ``ChipNotFoundError`` indicates cached chips have expired.
 
         Returns:
@@ -153,6 +208,10 @@ class ChipResolver:
         if not tables:
             raise ValueError("tables must not be empty")
         _validate_value(tenant_id, "tenant_id")
+        if tenant_id == _GLOBAL_TENANT:
+            raise ValueError(
+                f"tenant_id {_GLOBAL_TENANT!r} is reserved for global chips"
+            )
         for pv in partition_values:
             _validate_value(pv, "partition_value")
 
@@ -169,7 +228,10 @@ class ChipResolver:
                     "or add_table()"
                 )
             if table in self._global_chip_ids:
-                global_ids.append(self._global_chip_ids[table])
+                if force_recreate:
+                    global_ids.append(self._create_global_chip(td))
+                else:
+                    global_ids.append(self._global_chip_ids[table])
                 continue
             if td.partitioned:
                 partitioned_tables.add(table)
