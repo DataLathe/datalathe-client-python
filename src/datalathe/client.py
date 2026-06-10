@@ -55,6 +55,8 @@ def _parse_json(method: str, path: str, resp: requests.Response) -> Any:
             body,
         )
 from datalathe.types import (
+    AgentOptions,
+    AgentResponse,
     Chip,
     ChipMetadata,
     ChipTag,
@@ -72,6 +74,7 @@ from datalathe.types import (
     SourceRequest,
     SourceType,
     _from_dict,
+    _to_dict,
 )
 
 
@@ -334,6 +337,38 @@ class DatalatheClient:
     def put_license(self, license_key: str) -> LicenseStatus:
         data = self._put("/lathe/license", {"license_key": license_key})
         return _from_dict(LicenseStatus, data)
+
+    # --- AI agent ---
+
+    def query_agent(
+        self,
+        context_id: str,
+        user_question: str,
+        credential_id: str | None = None,
+        session_id: str | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        tenant_id: str | None = None,
+        agent_options: AgentOptions | None = None,
+    ) -> AgentResponse:
+        body: dict[str, Any] = {
+            "context_id": context_id,
+            "user_question": user_question,
+        }
+        if credential_id is not None:
+            body["credential_id"] = credential_id
+        if session_id is not None:
+            body["session_id"] = session_id
+        if conversation_history is not None:
+            body["conversation_history"] = conversation_history
+        if model is not None:
+            body["model"] = model
+        if tenant_id is not None:
+            body["tenant_id"] = tenant_id
+        if agent_options is not None:
+            body["agent_options"] = _to_dict(agent_options)
+        data = self._post("/lathe/ai/agent", body)
+        return _from_dict(AgentResponse, data)
 
     # --- Query analysis ---
 

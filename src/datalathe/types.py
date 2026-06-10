@@ -207,6 +207,33 @@ class LicenseStatus:
     error: str | None = None
 
 
+@dataclass
+class AgentOptions:
+    max_iterations: int | None = None
+    max_tool_calls: int | None = None
+    max_wall_clock_secs: int | None = None
+    max_attachments: int | None = None
+    run_sql_row_cap: int | None = None
+    max_total_input_tokens: int | None = None
+    suggest_follow_ups: bool | None = None
+
+
+@dataclass
+class AgentResponse:
+    request_id: str
+    answer: str | None = None
+    attachments: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    narration: list[dict[str, Any]] = field(default_factory=list)
+    follow_ups: list[str] = field(default_factory=list)
+    session_id: str | None = None
+    stop_reason: str | None = None
+    usage: dict[str, Any] | None = None
+    error: str | None = None
+    error_code: str | None = None
+    chip_id: str | None = None
+
+
 @dataclass(frozen=True)
 class TableDef:
     """Describes a database table that DataLathe can cache as a chip.
