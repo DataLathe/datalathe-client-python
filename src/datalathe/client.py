@@ -11,7 +11,12 @@ from datalathe.commands.command import DatalatheCommand
 from datalathe.commands.create_chip import CreateChipCommand
 from datalathe.commands.extract_tables import ExtractTablesCommand
 from datalathe.commands.generate_report import GenerateReportCommand
-from datalathe.errors import ChipNotFoundError, DatalatheApiError, DatalatheStageError
+from datalathe.errors import (
+    ChipNotFoundError,
+    DatalatheApiError,
+    DatalatheQueryError,
+    DatalatheStageError,
+)
 
 
 def _raise_for_failure(method: str, path: str, resp: requests.Response) -> None:
@@ -50,6 +55,8 @@ def _parse_json(method: str, path: str, resp: requests.Response) -> Any:
             body,
         )
 from datalathe.types import (
+    AgentOptions,
+    AgentResponse,
     Chip,
     ChipMetadata,
     ChipTag,
@@ -67,6 +74,7 @@ from datalathe.types import (
     SourceRequest,
     SourceType,
     _from_dict,
+    _to_dict,
 )
 
 
@@ -194,6 +202,7 @@ class DatalatheClient:
         source_type: SourceType = SourceType.LOCAL,
         transform_query: bool | None = None,
         return_transformed_query: bool | None = None,
+        raise_on_query_error: bool = True,
     ) -> GenerateReportResult:
         command = GenerateReportCommand(
             chip_ids=chip_ids,
@@ -207,6 +216,12 @@ class DatalatheClient:
         if response.result:
             for key, entry in response.result.items():
                 results[int(key)] = entry
+        if raise_on_query_error:
+            query_errors = {
+                idx: entry.error for idx, entry in results.items() if entry.error
+            }
+            if query_errors:
+                raise DatalatheQueryError(query_errors)
         return GenerateReportResult(results=results, timing=response.timing)
 
     # --- Database inspection ---
@@ -263,6 +278,7 @@ class DatalatheClient:
         self,
         s3_path: str,
         table_name: str | None = None,
+        partition: Partition | None = None,
         chip_name: str | None = None,
         column_replace: dict[str, str] | None = None,
         storage_config: S3StorageConfig | None = None,
@@ -273,6 +289,7 @@ class DatalatheClient:
                 query="",
                 s3_path=s3_path,
                 table_name=table_name,
+                partition=partition,
                 column_replace=column_replace,
             )],
             source_type=SourceType.S3,
@@ -320,6 +337,38 @@ class DatalatheClient:
     def put_license(self, license_key: str) -> LicenseStatus:
         data = self._put("/lathe/license", {"license_key": license_key})
         return _from_dict(LicenseStatus, data)
+
+    # --- AI agent ---
+
+    def query_agent(
+        self,
+        context_id: str,
+        user_question: str,
+        credential_id: str | None = None,
+        session_id: str | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
+        model: str | None = None,
+        tenant_id: str | None = None,
+        agent_options: AgentOptions | None = None,
+    ) -> AgentResponse:
+        body: dict[str, Any] = {
+            "context_id": context_id,
+            "user_question": user_question,
+        }
+        if credential_id is not None:
+            body["credential_id"] = credential_id
+        if session_id is not None:
+            body["session_id"] = session_id
+        if conversation_history is not None:
+            body["conversation_history"] = conversation_history
+        if model is not None:
+            body["model"] = model
+        if tenant_id is not None:
+            body["tenant_id"] = tenant_id
+        if agent_options is not None:
+            body["agent_options"] = _to_dict(agent_options)
+        data = self._post("/lathe/ai/agent", body)
+        return _from_dict(AgentResponse, data)
 
     # --- Query analysis ---
 

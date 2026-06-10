@@ -1,5 +1,7 @@
 from datalathe.client import DatalatheClient, GenerateReportResult
 from datalathe.types import (
+    AgentOptions,
+    AgentResponse,
     SourceType,
     ReportType,
     SchemaField,
@@ -21,7 +23,13 @@ from datalathe.types import (
     ChipsResponse,
     TableDef,
 )
-from datalathe.errors import ChipNotFoundError, DatalatheError, DatalatheApiError, DatalatheStageError
+from datalathe.errors import (
+    ChipNotFoundError,
+    DatalatheError,
+    DatalatheApiError,
+    DatalatheQueryError,
+    DatalatheStageError,
+)
 from datalathe.commands.command import DatalatheCommand
 from datalathe.commands.create_chip import CreateChipCommand
 from datalathe.commands.generate_report import GenerateReportCommand
@@ -32,6 +40,8 @@ from datalathe.resolver import ChipResolver
 __all__ = [
     "DatalatheClient",
     "GenerateReportResult",
+    "AgentOptions",
+    "AgentResponse",
     "SourceType",
     "ReportType",
     "SchemaField",
@@ -55,6 +65,7 @@ __all__ = [
     "DatalatheError",
     "DatalatheApiError",
     "DatalatheStageError",
+    "DatalatheQueryError",
     "ChipNotFoundError",
     "DatalatheCommand",
     "CreateChipCommand",
