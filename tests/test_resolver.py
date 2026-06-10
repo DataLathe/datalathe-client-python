@@ -75,6 +75,10 @@ ORDERS_DEF = TableDef(
 CATEGORIES_DEF = TableDef(
     "categories", "select * from categories",
 )
+EVENTS_DEF = TableDef(
+    "events", "select * from events",
+    partitioned=True, partition_field="event_date",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -750,3 +754,288 @@ def test_query_opt_out_returns_failed_entry() -> None:
 
     assert result.results[0].error == "Catalog Error: column missing"
     assert result.results[0].result is None
+
+
+# ---------------------------------------------------------------------------
+# warm_global_chips
+# ---------------------------------------------------------------------------
+
+@responses.activate
+def test_warm_global_chips_creates_for_tenantless_tables() -> None:
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([]),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        json=_stage_response("c_global_cat"),
+    )
+
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[CATEGORIES_DEF, USERS_DEF],
+    )
+    created = resolver.warm_global_chips()
+
+    assert created == ["c_global_cat"]
+    assert "tag=tenant%3Aglobal" in responses.calls[0].request.url
+    stage_body = json.loads(responses.calls[1].request.body)
+    assert stage_body["source_request"]["table_name"] == "categories"
+    assert stage_body["source_request"]["query"] == "select * from categories"
+    assert stage_body["tags"] == {"tenant": "global"}
+
+
+@responses.activate
+def test_warm_global_chips_skips_tenant_scoped_and_partitioned() -> None:
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([]),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        json=_stage_response("c_global_cat"),
+    )
+
+    resolver = ChipResolver(
+        DatalatheClient(BASE),
+        table_defs=[USERS_DEF, ORDERS_DEF, EVENTS_DEF, CATEGORIES_DEF],
+    )
+    created = resolver.warm_global_chips()
+
+    assert created == ["c_global_cat"]
+    stage_calls = [
+        c for c in responses.calls if "/lathe/stage/data" in c.request.url
+    ]
+    assert len(stage_calls) == 1
+    stage_body = json.loads(stage_calls[0].request.body)
+    assert stage_body["source_request"]["table_name"] == "categories"
+
+
+@responses.activate
+def test_warm_global_chips_adopts_existing_global_chips() -> None:
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([
+            {"chip_id": "c_existing_global", "sub_chip_id": "c_existing_global",
+             "table_name": "categories", "partition_value": ""},
+        ]),
+    )
+
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[CATEGORIES_DEF],
+    )
+    created = resolver.warm_global_chips()
+
+    assert created == []
+    ids = resolver.resolve_chips(["categories"], [], "42")
+    assert ids == ["c_existing_global"]
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_warm_global_chips_noop_without_eligible_tables() -> None:
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[USERS_DEF, ORDERS_DEF],
+    )
+    created = resolver.warm_global_chips()
+
+    assert created == []
+    assert len(responses.calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# resolve_chips — global chip cache
+# ---------------------------------------------------------------------------
+
+@responses.activate
+def test_resolve_chips_skips_search_when_all_global() -> None:
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([]),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        json=_stage_response("c_global_cat"),
+    )
+
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[CATEGORIES_DEF],
+    )
+    resolver.warm_global_chips()
+    ids = resolver.resolve_chips(["categories"], [], "42")
+
+    assert ids == ["c_global_cat"]
+    assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_resolve_chips_mixes_global_and_tenant_chips() -> None:
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([]),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        json=_stage_response("c_global_cat"),
+    )
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([
+            {"chip_id": "c_users", "sub_chip_id": "c_users",
+             "table_name": "users", "partition_value": ""},
+        ]),
+    )
+
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[CATEGORIES_DEF, USERS_DEF],
+    )
+    resolver.warm_global_chips()
+    ids = resolver.resolve_chips(["categories", "users"], [], "42")
+
+    assert sorted(ids) == ["c_global_cat", "c_users"]
+    assert "tag=tenant%3A42" in responses.calls[2].request.url
+
+
+@responses.activate
+def test_resolve_chips_force_recreate_replaces_cached_global_chip() -> None:
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([]),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        json=_stage_response("c_old_global"),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        json=_stage_response("c_new_global"),
+    )
+
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[CATEGORIES_DEF],
+    )
+    resolver.warm_global_chips()
+    ids = resolver.resolve_chips(["categories"], [], "42", force_recreate=True)
+
+    assert ids == ["c_new_global"]
+    recreate_body = json.loads(responses.calls[2].request.body)
+    assert recreate_body["tags"] == {"tenant": "global"}
+    assert resolver.resolve_chips(["categories"], [], "42") == ["c_new_global"]
+    assert len(responses.calls) == 3
+
+
+def test_resolve_chips_rejects_reserved_global_tenant() -> None:
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[USERS_DEF],
+    )
+    with pytest.raises(ValueError, match="reserved"):
+        resolver.resolve_chips(["users"], [], "global")
+
+
+# ---------------------------------------------------------------------------
+# register_prewarmed_chip
+# ---------------------------------------------------------------------------
+
+@responses.activate
+def test_register_prewarmed_chip_used_by_resolve() -> None:
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[CATEGORIES_DEF],
+    )
+    resolver.register_prewarmed_chip("categories", "c_external")
+    ids = resolver.resolve_chips(["categories"], [], "42")
+
+    assert ids == ["c_external"]
+    assert len(responses.calls) == 0
+
+
+def test_register_prewarmed_chip_rejects_tenant_scoped_table() -> None:
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[USERS_DEF],
+    )
+    with pytest.raises(ValueError, match="tenant_field"):
+        resolver.register_prewarmed_chip("users", "c_leak")
+
+
+def test_register_prewarmed_chip_rejects_partitioned_table() -> None:
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[EVENTS_DEF],
+    )
+    with pytest.raises(ValueError, match="partitioned"):
+        resolver.register_prewarmed_chip("events", "c_whole_table")
+
+
+def test_register_prewarmed_chip_requires_table_def() -> None:
+    resolver = ChipResolver(DatalatheClient(BASE))
+    with pytest.raises(ValueError, match="No TableDef registered"):
+        resolver.register_prewarmed_chip("mystery", "c_x")
+
+
+# ---------------------------------------------------------------------------
+# query — retry recovers from expired global chip
+# ---------------------------------------------------------------------------
+
+@responses.activate
+def test_query_retry_recovers_expired_global_chip() -> None:
+    responses.add(
+        responses.GET,
+        f"{BASE}/lathe/chips/search",
+        json=_chips_response([]),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        json=_stage_response("c_stale_global"),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/query/tables",
+        json=_extract_response(["categories"], "SELECT transformed"),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/report",
+        json={
+            "error": "Chip expired",
+            "error_code": "chip_not_found",
+            "chip_id": "c_stale_global",
+        },
+        status=404,
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/stage/data",
+        json=_stage_response("c_fresh_global"),
+    )
+    responses.add(
+        responses.POST,
+        f"{BASE}/lathe/report",
+        json=_report_response(
+            [["Books"]], [{"name": "name", "data_type": "Utf8"}],
+        ),
+    )
+
+    resolver = ChipResolver(
+        DatalatheClient(BASE), table_defs=[CATEGORIES_DEF],
+    )
+    resolver.warm_global_chips()
+    result = resolver.query("SELECT name FROM categories", tenant_id="42")
+
+    assert result.results[0].result == [["Books"]]
+    report_calls = [
+        c for c in responses.calls if "/lathe/report" in c.request.url
+    ]
+    assert len(report_calls) == 2
+    retry_body = json.loads(report_calls[1].request.body)
+    assert retry_body["chip_id"] == ["c_fresh_global"]
