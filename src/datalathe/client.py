@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -14,6 +15,8 @@ from datalathe.commands.generate_report import GenerateReportCommand
 from datalathe.errors import (
     ChipNotFoundError,
     DatalatheApiError,
+    DatalatheIngestError,
+    DatalatheIngestTimeoutError,
     DatalatheQueryError,
     DatalatheStageError,
 )
@@ -65,6 +68,7 @@ from datalathe.types import (
     ConnectionResponse,
     DatabaseTable,
     DuckDBDatabase,
+    IngestJob,
     LicenseStatus,
     Partition,
     ReportResultEntry,
@@ -193,6 +197,84 @@ class DatalatheClient:
             chip_ids.append(response.chip_id)
         return chip_ids
 
+    # --- Async ingest jobs ---
+
+    def create_chip_async(
+        self,
+        source_name: str,
+        query: str,
+        table_name: str,
+        partition: Partition | None = None,
+        chip_name: str | None = None,
+        column_replace: dict[str, str] | None = None,
+        storage_config: S3StorageConfig | None = None,
+        streaming: bool | None = None,
+        keyset_column: str | None = None,
+    ) -> IngestJob:
+        """Submits a MySQL chip-create as an async ingest job (engine 1.7.12+).
+        Returns immediately with a job handle; poll with get_ingest_job or
+        block with wait_for_ingest."""
+        command = CreateChipCommand(
+            source_type=SourceType.MYSQL,
+            source=SourceRequest(
+                database_name=source_name,
+                table_name=table_name,
+                query=query,
+                partition=partition,
+                column_replace=column_replace,
+                streaming=streaming,
+                keyset_column=keyset_column,
+            ),
+            chip_name=chip_name,
+            storage_config=storage_config,
+        )
+        body = dict(command.request)
+        body["async"] = True
+        data = self._post("/lathe/stage/data", body)
+        return _from_dict(IngestJob, data)
+
+    def get_ingest_job(self, job_id: str) -> IngestJob:
+        data = self._get(f"/lathe/jobs/{quote(job_id, safe='')}")
+        return _from_dict(IngestJob, data)
+
+    def list_ingest_jobs(self, status: str | None = None) -> list[IngestJob]:
+        path = "/lathe/jobs"
+        if status is not None:
+            path = f"{path}?{urlencode({'status': status})}"
+        data = self._get(path)
+        return [_from_dict(IngestJob, j) for j in data]
+
+    def resume_ingest_job(self, job_id: str) -> IngestJob:
+        data = self._post(f"/lathe/jobs/{quote(job_id, safe='')}/resume", {})
+        return _from_dict(IngestJob, data)
+
+    def wait_for_ingest(
+        self,
+        job_id: str,
+        poll_interval: float = 2.0,
+        timeout: float = 600.0,
+    ) -> IngestJob:
+        """Polls an async ingest job until it reaches a terminal state.
+        Returns the job on success; raises DatalatheIngestError on
+        failed/cancelled and DatalatheIngestTimeoutError on timeout."""
+        deadline = time.monotonic() + timeout
+        while True:
+            job = self.get_ingest_job(job_id)
+            if job.status == "succeeded":
+                return job
+            if job.status in ("failed", "cancelled"):
+                raise DatalatheIngestError(
+                    f"Ingest job {job_id} {job.status}: {job.error or 'no error detail'}",
+                    job,
+                )
+            if time.monotonic() >= deadline:
+                raise DatalatheIngestTimeoutError(
+                    f"Ingest job {job_id} did not reach a terminal state "
+                    f"within {timeout}s (last status: {job.status})",
+                    job,
+                )
+            time.sleep(poll_interval)
+
     # --- Query / Report ---
 
     def generate_report(
@@ -236,8 +318,19 @@ class DatalatheClient:
 
     # --- Chip metadata & tagging ---
 
-    def list_chips(self) -> ChipsResponse:
-        return self._parse_chips_response(self._get("/lathe/chips"))
+    def list_chips(
+        self,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> ChipsResponse:
+        params: dict[str, str] = {}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if offset is not None:
+            params["offset"] = str(offset)
+        qs = urlencode(params)
+        path = f"/lathe/chips?{qs}" if qs else "/lathe/chips"
+        return self._parse_chips_response(self._get(path))
 
     def get_chip(self, chip_id: str) -> ChipsResponse:
         """Fetches a single chip (with sub-chips, metadata, and tags) by ID.
@@ -503,4 +596,5 @@ class DatalatheClient:
             metadata=metadata,
             tags=tags,
             unreadable_chip_ids=unreadable_chip_ids,
+            total_count=data.get("total_count"),
         )

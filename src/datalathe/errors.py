@@ -31,6 +31,27 @@ class DatalatheQueryError(DatalatheError):
         super().__init__(f"Query execution failed ({detail})")
 
 
+class DatalatheIngestError(DatalatheError):
+    """Raised by wait_for_ingest when an async ingest job ends failed or
+    cancelled. ``job`` is the final job record; ``job.error`` carries the
+    engine's failure detail when available.
+    """
+
+    def __init__(self, message: str, job=None):
+        super().__init__(message)
+        self.job = job
+
+
+class DatalatheIngestTimeoutError(DatalatheError):
+    """Raised by wait_for_ingest when the job has not reached a terminal
+    state within the timeout. ``job`` is the last-observed job record.
+    """
+
+    def __init__(self, message: str, job=None):
+        super().__init__(message)
+        self.job = job
+
+
 class ChipNotFoundError(DatalatheApiError):
     """Raised when a request references a chip whose data is no longer available
     (typically because the underlying S3 object has expired via lifecycle policy).
