@@ -241,3 +241,111 @@ def test_stream_http_error_raises_before_streaming() -> None:
     with pytest.raises(DatalatheApiError) as excinfo:
         client.generate_report_stream(["chip1"], ["SELECT * FROM t"])
     assert excinfo.value.status_code == 400
+
+
+class _FakeResponse:
+    def __init__(self, body: str):
+        self._body = body
+        self.close_count = 0
+
+    def iter_lines(self):
+        for line in self._body.split("\n"):
+            yield line.encode("utf-8")
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
+def _result_set_over(body: str) -> tuple[DatalatheStreamingResultSet, _FakeResponse]:
+    resp = _FakeResponse(body)
+    rs = DatalatheStreamingResultSet(resp.iter_lines(), resp)
+    return rs, resp
+
+
+def test_stream_close_is_idempotent_and_releases_response() -> None:
+    rs, resp = _result_set_over(
+        _ndjson(
+            _SCHEMA,
+            {"type": "rows", "rows": [["Alice", "30"]]},
+            {"type": "end", "row_count": 1, "timing": {}},
+        )
+    )
+
+    rs.close()
+    assert resp.close_count == 1
+    rs.close()
+    assert resp.close_count == 1
+
+
+def test_stream_terminal_end_frame_auto_closes() -> None:
+    rs, resp = _result_set_over(
+        _ndjson(
+            _SCHEMA,
+            {"type": "rows", "rows": [["Alice", "30"]]},
+            {"type": "end", "row_count": 1, "timing": {}},
+        )
+    )
+
+    assert rs.next()
+    assert resp.close_count == 0
+    assert not rs.next()
+    assert resp.close_count == 1
+
+
+def test_stream_error_frame_auto_closes() -> None:
+    rs, resp = _result_set_over(
+        _ndjson(
+            _SCHEMA,
+            {"type": "error", "error": "storage unavailable"},
+        )
+    )
+
+    with pytest.raises(DatalatheQueryError):
+        rs.next()
+    assert resp.close_count == 1
+
+
+def test_stream_truncated_auto_closes() -> None:
+    rs, resp = _result_set_over(
+        _ndjson(
+            _SCHEMA,
+            {"type": "rows", "rows": [["Alice", "30"]]},
+        )
+    )
+
+    assert rs.next()
+    with pytest.raises(DatalatheApiError, match="without a terminal frame"):
+        rs.next()
+    assert resp.close_count == 1
+
+
+def test_stream_context_manager_releases_on_exit() -> None:
+    rs, resp = _result_set_over(
+        _ndjson(
+            _SCHEMA,
+            {"type": "rows", "rows": [["Alice", "30"], ["Bob", "25"]]},
+            {"type": "end", "row_count": 2, "timing": {}},
+        )
+    )
+
+    with rs as cursor:
+        assert cursor is rs
+    assert resp.close_count == 1
+
+
+def test_stream_context_manager_releases_on_early_break() -> None:
+    rs, resp = _result_set_over(
+        _ndjson(
+            _SCHEMA,
+            {"type": "rows", "rows": [["Alice", "30"], ["Bob", "25"]]},
+            {"type": "rows", "rows": [["Charlie", "40"]]},
+            {"type": "end", "row_count": 3, "timing": {}},
+        )
+    )
+
+    with rs as cursor:
+        for row in cursor:
+            assert row["name"] == "Alice"
+            break
+
+    assert resp.close_count == 1

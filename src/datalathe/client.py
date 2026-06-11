@@ -346,7 +346,7 @@ class DatalatheClient:
         )
         if not resp.ok:
             _raise_for_failure("POST", command.endpoint, resp)
-        return DatalatheStreamingResultSet(resp.iter_lines())
+        return DatalatheStreamingResultSet(resp.iter_lines(), resp)
 
     # --- Database inspection ---
 

@@ -6,6 +6,11 @@ from typing import Any, Iterator
 from datalathe.errors import DatalatheApiError, DatalatheQueryError
 from datalathe.types import SchemaField
 
+try:
+    from requests import Response
+except ImportError:  # pragma: no cover
+    Response = Any  # type: ignore[assignment,misc]
+
 
 class DatalatheStreamingResultSet:
     """Forward-only cursor over a streamed report result (NDJSON over POST
@@ -19,8 +24,14 @@ class DatalatheStreamingResultSet:
     terminal ``end`` frame has been consumed.
     """
 
-    def __init__(self, lines: Iterator[bytes | str]):
+    def __init__(
+        self,
+        lines: Iterator[bytes | str],
+        response: Response | None = None,
+    ):
         self._lines = lines
+        self._response = response
+        self._closed = False
         self._schema: list[SchemaField] = []
         self._transformed_query: str | None = None
         self._row_buffer: list[list[str | None]] = []
@@ -157,6 +168,24 @@ class DatalatheStreamingResultSet:
                 row[self._schema[i - 1].name] = self.get_object(i)
             yield row
 
+    def close(self) -> None:
+        """Releases the underlying streamed response so the connection can be
+        reused. Idempotent: safe to call more than once. The stream self-closes
+        on a terminal frame, on the truncated-stream error, and on context-
+        manager exit; call this explicitly only when abandoning the cursor
+        early (e.g. breaking out of iteration)."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._response is not None:
+            self._response.close()
+
+    def __enter__(self) -> DatalatheStreamingResultSet:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
     # --- Private ---
 
     @staticmethod
@@ -202,6 +231,7 @@ class DatalatheStreamingResultSet:
             )
         ftype = frame.get("type")
         if ftype == "error":
+            self.close()
             self._raise_error_frame(frame)
         if ftype != "schema":
             raise DatalatheApiError(
@@ -223,6 +253,7 @@ class DatalatheStreamingResultSet:
             if frame is None:
                 self._exhausted = True
                 if not self._terminated:
+                    self.close()
                     raise DatalatheApiError(
                         "Streamed report response ended without a terminal frame "
                         "(transport error); the result is incomplete",
@@ -244,10 +275,12 @@ class DatalatheStreamingResultSet:
                 self._exhausted = True
                 self._row_count = frame.get("row_count", self._rows_seen)
                 self._timing = frame.get("timing")
+                self.close()
                 return False
             if ftype == "error":
                 self._terminated = True
                 self._exhausted = True
+                self.close()
                 self._raise_error_frame(frame)
             raise DatalatheApiError(
                 f"Unexpected frame type in streamed report response: {ftype!r}",
