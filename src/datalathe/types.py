@@ -174,6 +174,22 @@ class ChipsResponse:
     #: Always populated by v1.7.1+ engines (empty list when none); empty on
     #: older engines that don't emit the field.
     unreadable_chip_ids: list[str] = field(default_factory=list)
+    #: Total number of chips matching the request, regardless of any
+    #: limit/offset applied. Emitted by v1.7.12+ engines; None on older ones.
+    total_count: int | None = None
+
+
+@dataclass
+class IngestJob:
+    job_id: str
+    chip_id: str | None = None
+    status: str | None = None
+    rows_ingested: int | None = None
+    chunks_done: int | None = None
+    chunks_total: int | None = None
+    error: str | None = None
+    created_at: int | None = None
+    updated_at: int | None = None
 
 
 @dataclass
