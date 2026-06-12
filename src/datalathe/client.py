@@ -12,6 +12,7 @@ from datalathe.commands.command import DatalatheCommand
 from datalathe.commands.create_chip import CreateChipCommand
 from datalathe.commands.extract_tables import ExtractTablesCommand
 from datalathe.commands.generate_report import GenerateReportCommand
+from datalathe.results.streaming_result_set import DatalatheStreamingResultSet
 from datalathe.errors import (
     ChipNotFoundError,
     DatalatheApiError,
@@ -305,6 +306,47 @@ class DatalatheClient:
             if query_errors:
                 raise DatalatheQueryError(query_errors)
         return GenerateReportResult(results=results, timing=response.timing)
+
+    def generate_report_stream(
+        self,
+        chip_ids: list[str],
+        queries: list[str],
+        source_type: SourceType = SourceType.LOCAL,
+        transform_query: bool | None = None,
+        return_transformed_query: bool | None = None,
+    ) -> DatalatheStreamingResultSet:
+        """Runs a single query and streams its result as NDJSON, returning a
+        forward-only DatalatheStreamingResultSet that pulls rows lazily as the
+        cursor advances. Unlike generate_report, the result is not bounded by
+        the server's max_result_rows guardrail. Only one query is supported;
+        the engine rejects multi-query streaming with a 400."""
+        if len(queries) != 1:
+            raise DatalatheApiError(
+                "generate_report_stream supports exactly one query "
+                f"(got {len(queries)}); use generate_report for batches",
+                400,
+                None,
+            )
+        command = GenerateReportCommand(
+            chip_ids=chip_ids,
+            source_type=source_type,
+            queries=queries,
+            transform_query=transform_query,
+            return_transformed_query=return_transformed_query,
+        )
+        body = dict(command.request)
+        body["stream"] = True
+        url = self._base_url + command.endpoint
+        resp = self._session.post(
+            url,
+            json=body,
+            headers={"Content-Type": "application/json"},
+            timeout=self._timeout,
+            stream=True,
+        )
+        if not resp.ok:
+            _raise_for_failure("POST", command.endpoint, resp)
+        return DatalatheStreamingResultSet(resp.iter_lines(), resp)
 
     # --- Database inspection ---
 
