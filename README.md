@@ -216,7 +216,7 @@ chips). Disable with `retry_on_expired=False`.
 tables = client.extract_tables("SELECT u.name, o.total FROM users u JOIN orders o ON u.id = o.user_id")
 # ["users", "orders"]
 
-# Extract tables and transform MySQL syntax to DuckDB
+# Extract tables and transform MySQL syntax to the engine's SQL dialect
 result = client.extract_tables_with_transform(
     "SELECT DATE_FORMAT(created_at, '%Y-%m') FROM users",
     transform=True,
