@@ -104,6 +104,34 @@ chip_ids = client.create_chips(
 )
 ```
 
+### Async ingest
+
+For large MySQL sources, `create_chip_async` submits the ingest as a background
+job (engine 1.7.12+) and returns immediately with a job handle. Poll with
+`get_ingest_job`, or block until completion with `wait_for_ingest`.
+
+```python
+job = client.create_chip_async("my_database", "SELECT * FROM orders", "orders")
+
+# Poll manually
+job = client.get_ingest_job(job.job_id)
+print(job.status, job.rows_ingested)
+
+# Or block until the job reaches a terminal state
+job = client.wait_for_ingest(job.job_id, poll_interval=2.0, timeout=600.0)
+print(job.chip_id)  # ready to query
+```
+
+`wait_for_ingest` raises `DatalatheIngestError` if the job ends failed or
+cancelled, and `DatalatheIngestTimeoutError` if it does not finish within the
+timeout. List jobs (optionally filtered by status) with `list_ingest_jobs`, and
+restart a resumable failed job with `resume_ingest_job`:
+
+```python
+failed = client.list_ingest_jobs(status="failed")
+job = client.resume_ingest_job(failed[0].job_id)
+```
+
 ## Querying
 
 ```python
@@ -123,6 +151,30 @@ for idx, entry in report.results.items():
 if report.timing:
     print(f"Total: {report.timing.total_ms}ms")
 ```
+
+### Streaming results
+
+For large results, `generate_report_stream` streams rows from the server instead
+of buffering the whole result, and is not subject to the server's row cap
+(`max_result_rows` applies to the buffered path only). It takes a single query
+and returns a `DatalatheStreamingResultSet` — a forward-only cursor that pulls
+rows lazily as you advance it. Use it as a context manager so the underlying
+connection is always released:
+
+```python
+with client.generate_report_stream(["chip-abc"], ["SELECT * FROM events"]) as rs:
+    for row in rs:
+        print(row)
+    print(rs.row_count)  # total rows, available once the stream is consumed
+    print(rs.timing)     # server-side timing from the terminal frame
+```
+
+The streaming cursor mirrors the `DatalatheResultSet` accessor surface
+(`next()`, `get_string()`, `get_int()`, iteration, schema access), but backward
+navigation (`previous`, `first`, `last`, `absolute`) is unsupported, and
+`row_count` is `None` until the stream is fully consumed. If you abandon the
+cursor early (for example, breaking out of iteration outside a `with` block),
+call `close()` to release the connection; it is idempotent.
 
 ## Working with Results
 
@@ -225,6 +277,55 @@ print(result["tables"])
 print(result["transformed_query"])
 ```
 
+## Connection Management
+
+Manage the engine's named MySQL connections. `upsert_connection` creates or
+updates a connection under an alias; `test_connection` verifies it is reachable.
+
+```python
+resp = client.upsert_connection(
+    alias="my_database",
+    host="db.internal",
+    port="3306",
+    database="analytics",
+    user="reader",
+    password="secret",
+)
+
+resp = client.test_connection("my_database")
+print(resp.status)  # or resp.error on failure
+
+for conn in client.list_connections():
+    print(f"{conn.alias}: {conn.user}@{conn.host}:{conn.port}/{conn.database}")
+```
+
+`get_connection(alias)` fetches a single connection and `delete_connection(alias)`
+removes it.
+
+## AI Agent
+
+`query_agent` asks a natural-language question against a context chip and
+returns the agent's answer along with its tool calls and any attachments.
+
+```python
+response = client.query_agent(
+    context_id="context-chip-id",
+    user_question="Which region had the highest order growth last quarter?",
+)
+print(response.answer)
+
+# Continue the conversation in the same session
+follow_up = client.query_agent(
+    context_id="context-chip-id",
+    user_question="Break that down by month.",
+    session_id=response.session_id,
+)
+```
+
+Optional parameters include `tenant_id` (scope the agent to a tenant's data),
+`model`, `conversation_history`, and `agent_options` (an `AgentOptions` with
+budget caps such as `max_iterations` and `max_tool_calls`).
+
 ## Client Configuration
 
 ```python
@@ -243,6 +344,8 @@ from datalathe import (
     DatalatheStageError,
     ChipNotFoundError,
     DatalatheQueryError,
+    DatalatheIngestError,
+    DatalatheIngestTimeoutError,
 )
 
 try:
@@ -276,6 +379,16 @@ report = client.generate_report(
 for idx, entry in report.results.items():
     if entry.error:
         print(f"Query {idx} failed: {entry.error}")
+
+# wait_for_ingest raises DatalatheIngestError when an async ingest job ends
+# failed or cancelled, and DatalatheIngestTimeoutError when it does not finish
+# in time. Both carry the last-observed job record on e.job.
+try:
+    job = client.wait_for_ingest(job.job_id)
+except DatalatheIngestError as e:
+    print(f"Ingest failed: {e.job.error}")
+except DatalatheIngestTimeoutError as e:
+    print(f"Still running after timeout, last status: {e.job.status}")
 ```
 
 ## Requirements
