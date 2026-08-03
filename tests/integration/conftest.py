@@ -33,3 +33,21 @@ def unique_chip_id(client: DatalatheClient):
         client.delete_chip(chip_id)
     except (ChipNotFoundError, DatalatheApiError):
         pass
+
+
+@pytest.fixture
+def chip_tracker(client: DatalatheClient):
+    """Registers chip ids for teardown deletion. Use for tests that create
+    several chips (e.g. chip-from-chip) and need all of them cleaned up."""
+    created: list[str] = []
+
+    def track(chip_id: str) -> str:
+        created.append(chip_id)
+        return chip_id
+
+    yield track
+    for chip_id in reversed(created):
+        try:
+            client.delete_chip(chip_id)
+        except (ChipNotFoundError, DatalatheApiError):
+            pass
