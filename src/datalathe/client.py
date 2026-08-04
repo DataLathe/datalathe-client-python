@@ -63,10 +63,13 @@ def _parse_json(method: str, path: str, resp: requests.Response) -> Any:
 from datalathe.types import (
     AgentOptions,
     AgentResponse,
+    AiContext,
+    AiCredential,
     Chip,
     ChipMetadata,
     ChipTag,
     ChipsResponse,
+    ChipQueryResult,
     ConnectionInfo,
     ConnectionResponse,
     DatabaseTable,
@@ -371,6 +374,19 @@ class DatalatheClient:
             _raise_for_failure("POST", command.endpoint, resp)
         return DatalatheStreamingResultSet(resp.iter_lines(), resp)
 
+    def query_chips(self, chip_ids: list[str], query: str) -> ChipQueryResult:
+        """Runs a single read-only SQL statement against the chips' raw
+        catalogs (engine 1.11+). Unlike report queries there is no view layer:
+        the statement sees every table inside the attached chips via
+        ``s_<sub_chip_id>.main.<table>``, including staging leftovers. Results
+        are truncated at the engine's max_result_rows cap (``truncated``
+        flag)."""
+        data = self._post(
+            "/lathe/chips/query",
+            {"chip_ids": chip_ids, "query": query},
+        )
+        return _from_dict(ChipQueryResult, data)
+
     # --- Database inspection ---
 
     def get_databases(self) -> list[DuckDBDatabase]:
@@ -496,6 +512,82 @@ class DatalatheClient:
         data = self._put("/lathe/license", {"license_key": license_key})
         return _from_dict(LicenseStatus, data)
 
+    # --- AI credentials & contexts ---
+
+    def register_ai_credential(
+        self,
+        name: str,
+        provider: str,
+        api_key: str,
+        default_model: str,
+        region: str | None = None,
+    ) -> AiCredential:
+        body: dict[str, Any] = {
+            "name": name,
+            "provider": provider,
+            "api_key": api_key,
+            "default_model": default_model,
+        }
+        if region is not None:
+            body["region"] = region
+        data = self._post("/lathe/ai/credentials", body)
+        return _from_dict(AiCredential, data)
+
+    def list_ai_credentials(self) -> list[AiCredential]:
+        data = self._get("/lathe/ai/credentials")
+        return [_from_dict(AiCredential, c) for c in data]
+
+    def delete_ai_credential(self, credential_id: str) -> None:
+        self._delete(f"/lathe/ai/credentials/{quote(credential_id, safe='')}")
+
+    def register_ai_context(
+        self,
+        name: str,
+        chip_ids: list[str],
+        column_descriptions: dict[str, dict[str, str]],
+        data_relationship_prompt: str,
+    ) -> AiContext:
+        body = {
+            "name": name,
+            "chip_ids": chip_ids,
+            "column_descriptions": column_descriptions,
+            "data_relationship_prompt": data_relationship_prompt,
+        }
+        data = self._post("/lathe/ai/contexts", body)
+        return _from_dict(AiContext, data)
+
+    def list_ai_contexts(self) -> list[AiContext]:
+        data = self._get("/lathe/ai/contexts")
+        return [_from_dict(AiContext, c) for c in data]
+
+    def get_ai_context(self, context_id: str) -> AiContext:
+        data = self._get(f"/lathe/ai/contexts/{quote(context_id, safe='')}")
+        return _from_dict(AiContext, data)
+
+    def update_ai_context(
+        self,
+        context_id: str,
+        name: str | None = None,
+        chip_ids: list[str] | None = None,
+        column_descriptions: dict[str, dict[str, str]] | None = None,
+        data_relationship_prompt: str | None = None,
+    ) -> AiContext:
+        """Updates an AI context. Only non-None fields are applied."""
+        body: dict[str, Any] = {}
+        if name is not None:
+            body["name"] = name
+        if chip_ids is not None:
+            body["chip_ids"] = chip_ids
+        if column_descriptions is not None:
+            body["column_descriptions"] = column_descriptions
+        if data_relationship_prompt is not None:
+            body["data_relationship_prompt"] = data_relationship_prompt
+        data = self._put(f"/lathe/ai/contexts/{quote(context_id, safe='')}", body)
+        return _from_dict(AiContext, data)
+
+    def delete_ai_context(self, context_id: str) -> None:
+        self._delete(f"/lathe/ai/contexts/{quote(context_id, safe='')}")
+
     # --- AI agent ---
 
     def query_agent(
@@ -527,6 +619,9 @@ class DatalatheClient:
             body["agent_options"] = _to_dict(agent_options)
         data = self._post("/lathe/ai/agent", body)
         return _from_dict(AgentResponse, data)
+
+    def delete_ai_session(self, session_id: str) -> None:
+        self._delete(f"/lathe/ai/sessions/{quote(session_id, safe='')}")
 
     # --- Query analysis ---
 

@@ -224,6 +224,43 @@ class LicenseStatus:
 
 
 @dataclass
+class ChipQueryColumn:
+    name: str
+    data_type: str
+
+
+@dataclass
+class ChipQueryResult:
+    columns: list[ChipQueryColumn] = field(default_factory=list)
+    rows: list[list[str | None]] = field(default_factory=list)
+    #: Rows were cut off at the engine's configured max_result_rows cap.
+    truncated: bool = False
+
+
+@dataclass
+class AiCredential:
+    credential_id: str
+    name: str
+    provider: str
+    default_model: str
+    created_at: int
+    tenant_id: str | None = None
+    region: str | None = None
+
+
+@dataclass
+class AiContext:
+    context_id: str
+    name: str
+    #: JSON-encoded list of chip IDs, as stored by the engine.
+    chip_ids: str
+    #: JSON-encoded mapping of table name -> column name -> description.
+    column_descriptions: str
+    data_relationship_prompt: str
+    created_at: int
+
+
+@dataclass
 class AgentOptions:
     max_iterations: int | None = None
     max_tool_calls: int | None = None

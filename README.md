@@ -176,6 +176,24 @@ navigation (`previous`, `first`, `last`, `absolute`) is unsupported, and
 cursor early (for example, breaking out of iteration outside a `with` block),
 call `close()` to release the connection; it is idempotent.
 
+### Raw chip queries
+
+`query_chips` runs a single read-only SQL statement against the chips' raw
+catalogs (engine 1.11+). Unlike report queries there is no view layer: the
+statement sees every table inside the attached chips via
+`s_<sub_chip_id>.main.<table>`, including staging leftovers. Results are
+truncated at the engine's `max_result_rows` cap (`truncated` flag).
+
+```python
+result = client.query_chips(
+    ["chip-abc"],
+    "SELECT COUNT(*) AS n FROM s_chip_abc.main.loans",
+)
+print([c.name for c in result.columns])
+print(result.rows)
+print(result.truncated)
+```
+
 ## Working with Results
 
 `DatalatheResultSet` provides a cursor-based API for navigating query results.
@@ -301,6 +319,39 @@ for conn in client.list_connections():
 
 `get_connection(alias)` fetches a single connection and `delete_connection(alias)`
 removes it.
+
+## AI Contexts & Credentials
+
+Contexts define which chips the AI can see and how the data relates;
+credentials hold the provider API key used to run queries.
+
+```python
+cred = client.register_ai_credential(
+    name="prod",
+    provider="anthropic",
+    api_key="sk-...",
+    default_model="your-default-model-id",
+)
+client.list_ai_credentials()
+client.delete_ai_credential(cred.credential_id)
+
+ctx = client.register_ai_context(
+    name="orders",
+    chip_ids=["chip-abc"],
+    column_descriptions={"orders": {"total": "Order total in USD"}},
+    data_relationship_prompt="orders joins customers on customer_id",
+)
+client.list_ai_contexts()
+client.get_ai_context(ctx.context_id)
+client.update_ai_context(ctx.context_id, name="orders-v2")  # only non-None fields are applied
+client.delete_ai_context(ctx.context_id)
+```
+
+`register_ai_credential` takes an optional `region` (required when the
+provider is `bedrock`). On returned contexts, `chip_ids` and
+`column_descriptions` are JSON-encoded strings as stored by the engine.
+
+`delete_ai_session(session_id)` discards a stored agent conversation session.
 
 ## AI Agent
 
