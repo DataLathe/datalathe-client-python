@@ -67,6 +67,7 @@ from datalathe.types import (
     ChipMetadata,
     ChipTag,
     ChipsResponse,
+    ChipQueryResult,
     ConnectionInfo,
     ConnectionResponse,
     DatabaseTable,
@@ -370,6 +371,19 @@ class DatalatheClient:
         if not resp.ok:
             _raise_for_failure("POST", command.endpoint, resp)
         return DatalatheStreamingResultSet(resp.iter_lines(), resp)
+
+    def query_chips(self, chip_ids: list[str], query: str) -> ChipQueryResult:
+        """Runs a single read-only SQL statement against the chips' raw
+        catalogs (engine 1.11+). Unlike report queries there is no view layer:
+        the statement sees every table inside the attached chips via
+        ``s_<sub_chip_id>.main.<table>``, including staging leftovers. Results
+        are truncated at the engine's max_result_rows cap (``truncated``
+        flag)."""
+        data = self._post(
+            "/lathe/chips/query",
+            {"chip_ids": chip_ids, "query": query},
+        )
+        return _from_dict(ChipQueryResult, data)
 
     # --- Database inspection ---
 

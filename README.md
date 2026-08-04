@@ -176,6 +176,24 @@ navigation (`previous`, `first`, `last`, `absolute`) is unsupported, and
 cursor early (for example, breaking out of iteration outside a `with` block),
 call `close()` to release the connection; it is idempotent.
 
+### Raw chip queries
+
+`query_chips` runs a single read-only SQL statement against the chips' raw
+catalogs (engine 1.11+). Unlike report queries there is no view layer: the
+statement sees every table inside the attached chips via
+`s_<sub_chip_id>.main.<table>`, including staging leftovers. Results are
+truncated at the engine's `max_result_rows` cap (`truncated` flag).
+
+```python
+result = client.query_chips(
+    ["chip-abc"],
+    "SELECT COUNT(*) AS n FROM s_chip_abc.main.loans",
+)
+print([c.name for c in result.columns])
+print(result.rows)
+print(result.truncated)
+```
+
 ## Working with Results
 
 `DatalatheResultSet` provides a cursor-based API for navigating query results.

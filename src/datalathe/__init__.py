@@ -2,6 +2,8 @@ from datalathe.client import DatalatheClient, GenerateReportResult
 from datalathe.types import (
     AgentOptions,
     AgentResponse,
+    ChipQueryColumn,
+    ChipQueryResult,
     SourceType,
     ReportType,
     SchemaField,
@@ -46,6 +48,8 @@ __all__ = [
     "GenerateReportResult",
     "AgentOptions",
     "AgentResponse",
+    "ChipQueryColumn",
+    "ChipQueryResult",
     "SourceType",
     "ReportType",
     "SchemaField",
