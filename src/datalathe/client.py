@@ -7,6 +7,8 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from datalathe.commands.command import DatalatheCommand
 from datalathe.commands.create_chip import CreateChipCommand
@@ -95,12 +97,33 @@ class DatalatheClient:
         base_url: str,
         headers: dict[str, str] | None = None,
         timeout: float = 30.0,
+        retry_on_429: bool = True,
+        max_retries: int = 3,
     ):
         self._base_url = base_url.rstrip("/")
         self._headers = headers or {}
         self._timeout = timeout
         self._session = requests.Session()
         self._session.headers.update(self._headers)
+        if retry_on_429:
+            retry = Retry(
+                total=None,
+                connect=0,
+                read=0,
+                redirect=0,
+                other=0,
+                status=max_retries,
+                status_forcelist=[429],
+                allowed_methods=None,
+                respect_retry_after_header=True,
+                backoff_factor=1,
+                backoff_max=30,
+                backoff_jitter=0.25,
+                raise_on_status=False,
+            )
+            adapter = HTTPAdapter(max_retries=retry)
+            self._session.mount("http://", adapter)
+            self._session.mount("https://", adapter)
 
     # --- Chip creation ---
 
