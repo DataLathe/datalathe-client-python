@@ -336,6 +336,22 @@ client = DatalatheClient(
 )
 ```
 
+When the engine sheds load it returns HTTP 429 with a `Retry-After` header,
+having done no work on the request, so the client transparently retries 429
+responses for every method (up to 3 attempts by default, honoring
+`Retry-After`). Network errors are never retried. Tune or disable with:
+
+```python
+client = DatalatheClient(
+    base_url="http://localhost:3000",
+    retry_on_429=False,  # default: True
+    max_retries=5,       # 429 retry budget (default: 3)
+)
+```
+
+If retries are exhausted, the final 429 surfaces as a normal
+`DatalatheApiError`.
+
 ## Error Handling
 
 ```python
