@@ -320,6 +320,39 @@ for conn in client.list_connections():
 `get_connection(alias)` fetches a single connection and `delete_connection(alias)`
 removes it.
 
+## AI Contexts & Credentials
+
+Contexts define which chips the AI can see and how the data relates;
+credentials hold the provider API key used to run queries.
+
+```python
+cred = client.register_ai_credential(
+    name="prod",
+    provider="anthropic",
+    api_key="sk-...",
+    default_model="your-default-model-id",
+)
+client.list_ai_credentials()
+client.delete_ai_credential(cred.credential_id)
+
+ctx = client.register_ai_context(
+    name="orders",
+    chip_ids=["chip-abc"],
+    column_descriptions={"orders": {"total": "Order total in USD"}},
+    data_relationship_prompt="orders joins customers on customer_id",
+)
+client.list_ai_contexts()
+client.get_ai_context(ctx.context_id)
+client.update_ai_context(ctx.context_id, name="orders-v2")  # only non-None fields are applied
+client.delete_ai_context(ctx.context_id)
+```
+
+`register_ai_credential` takes an optional `region` (required when the
+provider is `bedrock`). On returned contexts, `chip_ids` and
+`column_descriptions` are JSON-encoded strings as stored by the engine.
+
+`delete_ai_session(session_id)` discards a stored agent conversation session.
+
 ## AI Agent
 
 `query_agent` asks a natural-language question against a context chip and
