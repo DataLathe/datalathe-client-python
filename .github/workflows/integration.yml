@@ -15,12 +15,12 @@ jobs:
     timeout-minutes: 30
     if: github.event_name == 'workflow_dispatch' || (github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           path: client
 
       - name: Checkout datalathe-backend
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           repository: DataLathe/datalathe-backend
           ref: main
