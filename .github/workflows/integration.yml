@@ -1,0 +1,39 @@
+name: integration
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # Full chip-lifecycle suite against a real engine + chip-manager built
+  # from datalathe-backend main, on the org's Dagger cloud engine (whose
+  # cache already holds the backend build from backend CI). Fork and
+  # dependabot PRs are skipped: they run without the secrets this needs.
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'workflow_dispatch' || (github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: client
+
+      - name: Checkout datalathe-backend
+        uses: actions/checkout@v7
+        with:
+          repository: DataLathe/datalathe-backend
+          ref: main
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+          path: backend
+
+      - name: Run integration suite
+        uses: dagger/dagger-for-github@v8.4.1
+        env:
+          DAGGER_CLOUD_ENGINE: "1"
+        with:
+          version: "1.0.0-beta.9"
+          dagger-flags: -W ./backend
+          verb: call
+          args: integration-python --source=./backend --python-client=./client
+          cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
