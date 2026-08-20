@@ -5,7 +5,14 @@ import re
 
 from datalathe.client import DatalatheClient, GenerateReportResult
 from datalathe.errors import ChipNotFoundError
-from datalathe.types import Partition, S3StorageConfig, SourceRequest, TableDef
+from datalathe.types import (
+    Chip,
+    ChipTag,
+    Partition,
+    S3StorageConfig,
+    SourceRequest,
+    TableDef,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +99,69 @@ class ChipResolver:
             return "is partitioned"
         return None
 
+    def _expected_freshness(self, td: TableDef) -> dict[str, str] | None:
+        expected = td.freshness_tags
+        if callable(expected):
+            expected = expected()
+        if not expected:
+            return None
+        if self._tag_key in expected:
+            raise ValueError(
+                f"Freshness tag key {self._tag_key!r} for table "
+                f"{td.table_name!r} collides with the resolver's tag_key"
+            )
+        return dict(expected)
+
+    @staticmethod
+    def _index_tags(tags: list[ChipTag] | None) -> dict[str, dict[str, str]]:
+        by_chip: dict[str, dict[str, str]] = {}
+        for tag in tags or []:
+            by_chip.setdefault(tag.chip_id, {})[tag.key] = tag.value
+        return by_chip
+
+    def _evict_if_stale(
+        self,
+        chip: Chip,
+        expected: dict[str, str] | None,
+        tags_by_chip: dict[str, dict[str, str]],
+        evicted_chip_ids: set[str],
+    ) -> bool:
+        """Deletes the chip when its tags don't carry every expected freshness
+        entry.  Returns ``True`` when the chip should be treated as missing
+        (deleted here, already deleted concurrently, or evicted earlier in
+        this pass).  A failed delete keeps the stale chip in play — serving
+        stale data beats creating a duplicate alongside a chip that wouldn't
+        die.
+        """
+        if expected is None:
+            return False
+        if chip.chip_id in evicted_chip_ids:
+            return True
+        chip_tags = tags_by_chip.get(chip.chip_id, {})
+        if all(chip_tags.get(k) == v for k, v in expected.items()):
+            return False
+        try:
+            self._client.delete_chip(chip.chip_id)
+            logger.info(
+                "Evicted stale chip %s for table '%s' pv='%s' "
+                "(freshness tags changed)",
+                chip.chip_id, chip.table_name, chip.partition_value,
+            )
+        except ChipNotFoundError:
+            logger.info(
+                "Stale chip %s for table '%s' already deleted concurrently",
+                chip.chip_id, chip.table_name,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to evict stale chip %s for table '%s'; "
+                "keeping it this resolve",
+                chip.chip_id, chip.table_name, exc_info=True,
+            )
+            return False
+        evicted_chip_ids.add(chip.chip_id)
+        return True
+
     def register_prewarmed_chip(self, table_name: str, chip_id: str) -> None:
         """Register a chip that was created externally.
 
@@ -129,6 +199,9 @@ class ChipResolver:
         subsequent ``resolve_chips`` / ``query`` calls, skipping redundant
         chip creation. Existing chips tagged ``{tag_key}: global`` are adopted
         instead of recreated, so warming is idempotent across restarts.
+        An existing chip whose tags don't match its table's ``freshness_tags``
+        is deleted and recreated instead of adopted; chip IDs already cached
+        in a previous call skip freshness checks for the life of the process.
 
         Returns:
             List of chip IDs newly created by this call.
@@ -141,10 +214,15 @@ class ChipResolver:
         created: list[str] = []
         if not eligible:
             return created
+        freshness_by_table = {
+            td.table_name: self._expected_freshness(td) for td in eligible
+        }
 
         existing = self._client.search_chips(
             tag=f"{self._tag_key}:{_GLOBAL_TENANT}",
         )
+        tags_by_chip = self._index_tags(existing.tags)
+        evicted_chip_ids: set[str] = set()
         eligible_names = {td.table_name for td in eligible}
         for chip in existing.chips:
             if (
@@ -152,6 +230,11 @@ class ChipResolver:
                 and chip.chip_id == chip.sub_chip_id
                 and chip.table_name not in self._global_chip_ids
             ):
+                if self._evict_if_stale(
+                    chip, freshness_by_table.get(chip.table_name),
+                    tags_by_chip, evicted_chip_ids,
+                ):
+                    continue
                 self._global_chip_ids[chip.table_name] = chip.chip_id
 
         for td in eligible:
@@ -163,6 +246,8 @@ class ChipResolver:
 
     def _create_global_chip(self, td: TableDef) -> str:
         logger.info("Warming global chip for table '%s'", td.table_name)
+        tags = {self._tag_key: _GLOBAL_TENANT}
+        tags.update(self._expected_freshness(td) or {})
         ids = self._client.create_chips(
             sources=[SourceRequest(
                 database_name=td.source_name,
@@ -170,7 +255,7 @@ class ChipResolver:
                 query=td.sql,
             )],
             source_type=td.source_type,
-            tags={self._tag_key: _GLOBAL_TENANT},
+            tags=tags,
             storage_config=self._storage_config,
         )
         self._global_chip_ids[td.table_name] = ids[0]
@@ -184,6 +269,10 @@ class ChipResolver:
         force_recreate: bool = False,
     ) -> list[str]:
         """Find existing chips or create new ones for every table needed.
+
+        Tables that declare ``freshness_tags`` on their ``TableDef`` have any
+        matched chip whose tags are missing an expected entry or hold a
+        different value deleted and recreated in the same pass.
 
         Args:
             tables: Table names referenced by the query.  Every table must
@@ -218,6 +307,7 @@ class ChipResolver:
         global_ids: list[str] = []
         partitioned_tables: set[str] = set()
         unpartitioned_tables: set[str] = set()
+        freshness_by_table: dict[str, dict[str, str]] = {}
         for table in tables:
             _validate_identifier(table, "table name")
             td = self._table_defs.get(table)
@@ -227,6 +317,9 @@ class ChipResolver:
                     "register it via the table_defs constructor argument "
                     "or add_table()"
                 )
+            expected = self._expected_freshness(td)
+            if expected:
+                freshness_by_table[table] = expected
             if table in self._global_chip_ids:
                 if force_recreate:
                     global_ids.append(self._create_global_chip(td))
@@ -247,20 +340,32 @@ class ChipResolver:
             tag = f"{self._tag_key}:{tenant_id}"
             existing = self._client.search_chips(tag=tag)
             pv_set = set(partition_values)
+            tags_by_chip = self._index_tags(existing.tags)
+            evicted_chip_ids: set[str] = set()
 
             for chip in existing.chips:
                 tbl = chip.table_name
                 if (
                     tbl in unpartitioned_tables
                     and chip.chip_id == chip.sub_chip_id
-                    and tbl not in seen_unpartitioned
                 ):
-                    seen_unpartitioned.add(tbl)
-                    existing_unpartitioned_ids.append(chip.chip_id)
+                    if self._evict_if_stale(
+                        chip, freshness_by_table.get(tbl),
+                        tags_by_chip, evicted_chip_ids,
+                    ):
+                        continue
+                    if tbl not in seen_unpartitioned:
+                        seen_unpartitioned.add(tbl)
+                        existing_unpartitioned_ids.append(chip.chip_id)
                 elif (
                     tbl in partitioned_tables
                     and chip.partition_value in pv_set
                 ):
+                    if self._evict_if_stale(
+                        chip, freshness_by_table.get(tbl),
+                        tags_by_chip, evicted_chip_ids,
+                    ):
+                        continue
                     key = f"{tbl}|{chip.partition_value}"
                     if key not in seen_partitioned:
                         seen_partitioned.add(key)
@@ -285,7 +390,7 @@ class ChipResolver:
                     query=sql,
                 )],
                 source_type=td.source_type,
-                tags=tags,
+                tags={**tags, **freshness_by_table.get(table, {})},
                 storage_config=self._storage_config,
             )
             created_ids.extend(ids)
@@ -320,7 +425,7 @@ class ChipResolver:
                         ),
                     )],
                     source_type=td.source_type,
-                    tags=tags,
+                    tags={**tags, **freshness_by_table.get(table, {})},
                     storage_config=self._storage_config,
                 )
                 created_ids.extend(ids)

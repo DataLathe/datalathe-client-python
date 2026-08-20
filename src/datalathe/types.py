@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -297,6 +298,16 @@ class TableDef:
 
     ``sql`` must not contain a ``WHERE`` clause — tenant and partition filters
     are appended automatically by ``ChipResolver``.
+
+    ``freshness_tags`` opts the table into staleness tracking: the resolver
+    stamps these tag entries on every chip it creates for the table and, on
+    each resolve, deletes any existing chip whose tags are missing an entry
+    or carry a different value — the replacement is created in the same pass.
+    Semantics are equality-only: encode each staleness dimension as its own
+    entry (e.g. a schema version, a load-generation date) and change the
+    value when chips staged under the old value must be rebuilt.  A callable
+    is evaluated once per table per resolve, for values that change over the
+    resolver's lifetime (e.g. the current load generation's max date).
     """
 
     table_name: str
@@ -306,6 +317,7 @@ class TableDef:
     partitioned: bool = False
     partition_field: str | None = None
     tenant_field: str | None = None
+    freshness_tags: dict[str, str] | Callable[[], dict[str, str]] | None = None
 
     def __post_init__(self) -> None:
         if self.partitioned and not self.partition_field:
