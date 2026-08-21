@@ -5,35 +5,33 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Full chip-lifecycle suite against a real engine + chip-manager built
-  # from datalathe-backend main, on the org's Dagger cloud engine (whose
-  # cache already holds the backend build from backend CI). Fork and
-  # dependabot PRs are skipped: they run without the secrets this needs.
+  # Full chip-lifecycle suite against a real engine + chip-manager built from
+  # the datalathe-backend module pinned in dagger/dagger-module.toml, on the
+  # org's Dagger cloud engine (whose cache already holds the backend build
+  # from backend CI). Fork and dependabot PRs are skipped: they run without
+  # the secrets this needs.
   integration:
     name: integration
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'workflow_dispatch' || (github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          path: client
+      - uses: actions/checkout@v7
 
-      - name: Checkout datalathe-backend
-        uses: actions/checkout@v7.0.1
-        with:
-          repository: DataLathe/datalathe-backend
-          ref: main
-          token: ${{ secrets.CROSS_REPO_TOKEN }}
-          path: backend
+      # The workspace module depends on the private datalathe-backend repo;
+      # dagger forwards these credentials to the engine for the module fetch.
+      - name: Configure git credentials for the backend module
+        env:
+          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: |
+          git config --global credential.helper '!f() { echo "username=x-access-token"; echo "password=$CROSS_REPO_TOKEN"; }; f'
 
-      - name: Run integration suite
+      - name: Run integration check
         uses: dagger/dagger-for-github@v8.4.1
         env:
           DAGGER_CLOUD_ENGINE: "1"
+          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         with:
           version: "1.0.0-beta.9"
-          dagger-flags: -W ./backend
-          verb: call
-          args: integration-python --source=./backend --python-client=./client
+          verb: check
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
