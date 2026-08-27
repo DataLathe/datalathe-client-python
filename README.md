@@ -279,6 +279,29 @@ result = resolver.query(
 The `query()` method automatically retries once on `ChipNotFoundError` (expired
 chips). Disable with `retry_on_expired=False`.
 
+### Freshness tags
+
+A `TableDef` can opt into staleness tracking with `freshness_tags`. The
+resolver stamps these tag entries on every chip it creates for the table and,
+on each resolve, deletes any existing chip whose tags are missing an entry or
+carry a different value — the replacement chip is created in the same resolve.
+Comparison is equality-only, so encode each staleness dimension as its own
+entry (a schema version, a load-generation date) and change the value when
+chips staged under the old value must be rebuilt.
+
+```python
+# Static values: a plain dict
+TableDef("users", "select * from users", tenant_field="org_id",
+         freshness_tags={"schema_version": "3"})
+
+# Values that change over the resolver's lifetime: a zero-argument
+# callable, evaluated once per table per resolve
+TableDef("orders", "select * from orders",
+         partitioned=True, partition_field="order_date",
+         tenant_field="org_id",
+         freshness_tags=lambda: {"load_date": latest_load_date()})
+```
+
 ## SQL Analysis
 
 ```python
