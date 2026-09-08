@@ -466,7 +466,7 @@ class ChipResolver:
             retry_on_expired: If ``True`` (the default), automatically
                 re-resolve chips and retry once when a
                 ``ChipNotFoundError`` is raised.
-            transform: Whether to request MySQL-to-DuckDB SQL transformation.
+            transform: Whether to request MySQL-to-engine-dialect SQL transformation.
             raise_on_query_error: If ``True`` (the default), raise
                 ``DatalatheQueryError`` when a query fails at execution time.
                 Set ``False`` to inspect ``ReportResultEntry.error`` instead.
