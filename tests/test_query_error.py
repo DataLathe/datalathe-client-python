@@ -1,7 +1,7 @@
 """Tests for surfacing per-query execution errors from generate_report.
 
 The engine runs /lathe/report in with_errors mode: a query that fails at
-DuckDB execution time comes back HTTP 200 with the per-entry `error` field
+engine execution time comes back HTTP 200 with the per-entry `error` field
 populated and `result` null. These tests lock the contract that the client
 raises on that instead of silently returning empty results.
 """
