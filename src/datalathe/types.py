@@ -114,7 +114,7 @@ class ReportResponse:
 
 
 @dataclass
-class DuckDBDatabase:
+class DatabaseInfo:
     database_name: str
     database_oid: int
     internal: bool

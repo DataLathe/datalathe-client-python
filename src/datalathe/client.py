@@ -73,7 +73,7 @@ from datalathe.types import (
     ConnectionInfo,
     ConnectionResponse,
     DatabaseTable,
-    DuckDBDatabase,
+    DatabaseInfo,
     IngestJob,
     LicenseStatus,
     Partition,
@@ -389,9 +389,9 @@ class DatalatheClient:
 
     # --- Database inspection ---
 
-    def get_databases(self) -> list[DuckDBDatabase]:
+    def get_databases(self) -> list[DatabaseInfo]:
         data = self._get("/lathe/stage/databases")
-        return [_from_dict(DuckDBDatabase, d) for d in data]
+        return [_from_dict(DatabaseInfo, d) for d in data]
 
     def get_database_schema(self, database_name: str) -> list[DatabaseTable]:
         data = self._get(f"/lathe/stage/schema/{quote(database_name, safe='')}")
