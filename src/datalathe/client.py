@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -94,6 +95,40 @@ class GenerateReportResult:
     timing: ReportTiming | None
 
 
+IDLE_CONNECTION_KEEP_ALIVE_SECONDS = 30.0
+"""How long a pooled connection may sit idle before it is discarded.
+
+A load balancer or reverse proxy in front of the engine closes idle
+connections on its own schedule and does not tell the client. A pooled
+connection that outlives the proxy's idle timeout is dead while still looking
+reusable, so the next request written to it stalls until the read timeout
+expires. urllib3 pools connections with no expiry of its own, so without this
+bound a connection is reused no matter how long it has been sitting. Thirty
+seconds is below every proxy default we have seen; AWS load balancers ship
+with sixty.
+"""
+
+
+class _IdleExpiringHTTPAdapter(HTTPAdapter):
+    """An adapter that drops pooled connections after an idle period."""
+
+    def __init__(self, *args, max_idle_seconds: float = IDLE_CONNECTION_KEEP_ALIVE_SECONDS, **kwargs):
+        self._max_idle_seconds = max_idle_seconds
+        self._idle_lock = threading.Lock()
+        self._last_used = time.monotonic()
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        with self._idle_lock:
+            if time.monotonic() - self._last_used > self._max_idle_seconds:
+                self.poolmanager.clear()
+        try:
+            return super().send(request, **kwargs)
+        finally:
+            with self._idle_lock:
+                self._last_used = time.monotonic()
+
+
 class DatalatheClient:
     def __init__(
         self,
@@ -108,6 +143,7 @@ class DatalatheClient:
         self._timeout = timeout
         self._session = requests.Session()
         self._session.headers.update(self._headers)
+        retry = None
         if retry_on_429:
             retry = Retry(
                 total=None,
@@ -124,9 +160,12 @@ class DatalatheClient:
                 backoff_jitter=0.25,
                 raise_on_status=False,
             )
-            adapter = HTTPAdapter(max_retries=retry)
-            self._session.mount("http://", adapter)
-            self._session.mount("https://", adapter)
+        adapter = _IdleExpiringHTTPAdapter(
+            max_idle_seconds=IDLE_CONNECTION_KEEP_ALIVE_SECONDS,
+            **({"max_retries": retry} if retry is not None else {}),
+        )
+        self._session.mount("http://", adapter)
+        self._session.mount("https://", adapter)
 
     # --- Chip creation ---
 

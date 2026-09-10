@@ -489,3 +489,20 @@ except DatalatheIngestTimeoutError as e:
 ## License
 
 MIT
+
+## Connections and proxies
+
+The client pools HTTP connections and discards one that has been idle for more
+than 30 seconds.
+
+That bound is deliberately below the idle timeout of anything likely to sit
+between you and the engine. A load balancer closes an idle connection on its own
+schedule without telling the client, so a pooled connection that outlives the
+proxy's idle timeout is dead while still looking reusable. The next request
+written to it stalls until the read timeout expires. urllib3 pools connections
+with no expiry of its own, so without this bound a connection is reused no matter
+how long it has been sitting.
+
+If you run the engine behind a proxy whose idle timeout is under 30 seconds,
+raise the proxy rather than the client.
+
