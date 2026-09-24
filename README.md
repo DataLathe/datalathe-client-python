@@ -181,7 +181,8 @@ call `close()` to release the connection; it is idempotent.
 `query_chips` runs a single read-only SQL statement against the chips' raw
 catalogs (engine 1.11+). Unlike report queries there is no view layer: the
 statement sees every table inside the attached chips via
-`s_<sub_chip_id>.main.<table>`, including staging leftovers. Results are
+`<sub_chip_id>.main.<table>` (hyphens become underscores; an id that doesn't
+start with a letter gets an `s_` prefix), including staging leftovers. Results are
 truncated at the engine's `max_result_rows` cap (`truncated` flag).
 
 ```python
