@@ -6,10 +6,12 @@ on:
 
 jobs:
   # Full chip-lifecycle suite against a real engine + chip-manager built from
-  # the datalathe-backend module pinned in dagger/dagger-module.toml, on the
-  # org's Dagger cloud engine (whose cache already holds the backend build
-  # from backend CI). Fork and dependabot PRs are skipped: they run without
-  # the secrets this needs.
+  # the datalathe-backend module pinned below, on the org's Dagger cloud
+  # engine (whose cache already holds the backend build from backend CI).
+  # The module is loaded with -m rather than bound as a client: Dagger only
+  # lends host git credentials to the main client, and the backend repo is
+  # private. Fork and dependabot PRs are skipped: they run without the
+  # secrets this needs.
   integration:
     name: integration
     runs-on: ubuntu-latest
@@ -32,6 +34,8 @@ jobs:
           DAGGER_CLOUD_ENGINE: "1"
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         with:
-          version: "1.0.0-beta.9"
-          verb: check
+          version: "1.0.0-beta.15"
+          verb: call
+          module: github.com/DataLathe/datalathe-backend/dagger@387cadb0906ec7bc08287f37f0459d126f5d6378
+          args: integration-python --python-client=.
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
