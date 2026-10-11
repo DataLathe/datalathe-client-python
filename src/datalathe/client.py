@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import copy
 import json
+import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -129,6 +132,12 @@ class _IdleExpiringHTTPAdapter(HTTPAdapter):
                 self._last_used = time.monotonic()
 
 
+logger = logging.getLogger(__name__)
+
+CORRELATION_ID_HEADER = "X-Correlation-ID"
+_CORRELATION_ID_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}")
+
+
 class DatalatheClient:
     def __init__(
         self,
@@ -143,6 +152,8 @@ class DatalatheClient:
         self._timeout = timeout
         self._session = requests.Session()
         self._session.headers.update(self._headers)
+        # Per-copy headers (see with_correlation_id); never put on the shared session.
+        self._extra_headers: dict[str, str] = {}
         retry = None
         if retry_on_429:
             retry = Retry(
@@ -299,6 +310,27 @@ class DatalatheClient:
         data = self._post("/lathe/stage/data", body)
         return _from_dict(IngestJob, data)
 
+    def with_correlation_id(self, correlation_id: str | None) -> DatalatheClient:
+        """Return a client that sends ``X-Correlation-ID`` on every request.
+
+        The engine tags its logs, ingest jobs and chips with the ID. The copy
+        shares this client's session and connection pool, so create one per
+        request. ``None``, blank or invalid IDs (not matching
+        ``[A-Za-z0-9._:-]{1,128}``) return this client unchanged; invalid ones
+        log a warning. Never raises.
+        """
+        if not correlation_id or not correlation_id.strip():
+            return self
+        if not _CORRELATION_ID_PATTERN.fullmatch(correlation_id):
+            logger.warning(
+                "Ignoring correlation ID that does not match [A-Za-z0-9._:-]{1,128}; "
+                "the engine will generate one"
+            )
+            return self
+        scoped = copy.copy(self)
+        scoped._extra_headers = {**self._extra_headers, CORRELATION_ID_HEADER: correlation_id}
+        return scoped
+
     def get_ingest_job(self, job_id: str) -> IngestJob:
         data = self._get(f"/lathe/jobs/{quote(job_id, safe='')}")
         return _from_dict(IngestJob, data)
@@ -405,7 +437,7 @@ class DatalatheClient:
         resp = self._session.post(
             url,
             json=body,
-            headers={"Content-Type": "application/json"},
+            headers={**self._extra_headers, "Content-Type": "application/json"},
             timeout=self._timeout,
             stream=True,
         )
@@ -697,7 +729,7 @@ class DatalatheClient:
         resp = self._session.post(
             url,
             json=command.request,
-            headers={"Content-Type": "application/json"},
+            headers={**self._extra_headers, "Content-Type": "application/json"},
             timeout=self._timeout,
         )
         if not resp.ok:
@@ -748,7 +780,7 @@ class DatalatheClient:
 
     def _get(self, path: str) -> Any:
         url = self._base_url + path
-        resp = self._session.get(url, timeout=self._timeout)
+        resp = self._session.get(url, headers=self._extra_headers, timeout=self._timeout)
         if not resp.ok:
             _raise_for_failure("GET", path, resp)
         return _parse_json("GET", path, resp)
@@ -758,7 +790,7 @@ class DatalatheClient:
         resp = self._session.post(
             url,
             json=body,
-            headers={"Content-Type": "application/json"},
+            headers={**self._extra_headers, "Content-Type": "application/json"},
             timeout=self._timeout,
         )
         if not resp.ok:
@@ -767,7 +799,7 @@ class DatalatheClient:
 
     def _delete(self, path: str) -> None:
         url = self._base_url + path
-        resp = self._session.delete(url, timeout=self._timeout)
+        resp = self._session.delete(url, headers=self._extra_headers, timeout=self._timeout)
         if not resp.ok:
             _raise_for_failure("DELETE", path, resp)
 
@@ -776,7 +808,7 @@ class DatalatheClient:
         resp = self._session.put(
             url,
             json=body,
-            headers={"Content-Type": "application/json"},
+            headers={**self._extra_headers, "Content-Type": "application/json"},
             timeout=self._timeout,
         )
         if not resp.ok:

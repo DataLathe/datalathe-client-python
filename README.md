@@ -401,6 +401,18 @@ Optional parameters include `tenant_id` (scope the agent to a tenant's data),
 `model`, `conversation_history`, and `agent_options` (an `AgentOptions` with
 budget caps such as `max_iterations` and `max_tool_calls`).
 
+## Correlation IDs
+
+```python
+scoped = client.with_correlation_id(request_id)
+scoped.create_chip_async(...)
+```
+
+The copy shares the client's session, so create one per request. Valid IDs
+match `[A-Za-z0-9._:-]{1,128}`; `None`, blank or invalid IDs leave requests
+untagged and never raise. `IngestJob.correlation_id` and chip metadata return
+the stored ID.
+
 ## Client Configuration
 
 ```python
