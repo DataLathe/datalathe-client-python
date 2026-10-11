@@ -61,3 +61,14 @@ def test_ingest_job_correlation_id_parses_and_tolerates_absence():
     client = DatalatheClient(BASE)
     assert client.get_ingest_job("j1").correlation_id == "nc-job"
     assert client.get_ingest_job("j2").correlation_id is None
+
+
+@responses.activate
+def test_non_string_id_is_stringified_never_raises():
+    import uuid
+
+    responses.add(responses.GET, f"{BASE}/lathe/jobs/j1", json={"job_id": "j1", "status": "queued"})
+    u = uuid.UUID("03a813fe-6a62-53fb-8144-846c197ac8f6")
+    scoped = DatalatheClient(BASE).with_correlation_id(u)  # type: ignore[arg-type]
+    scoped.get_ingest_job("j1")
+    assert responses.calls[0].request.headers["X-Correlation-ID"] == str(u)

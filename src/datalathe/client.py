@@ -319,6 +319,8 @@ class DatalatheClient:
         ``[A-Za-z0-9._:-]{1,128}``) return this client unchanged; invalid ones
         log a warning. Never raises.
         """
+        if correlation_id is not None and not isinstance(correlation_id, str):
+            correlation_id = str(correlation_id)  # e.g. uuid.UUID
         if not correlation_id or not correlation_id.strip():
             return self
         if not _CORRELATION_ID_PATTERN.fullmatch(correlation_id):
