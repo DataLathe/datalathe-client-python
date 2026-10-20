@@ -157,6 +157,7 @@ class ChipMetadata:
     storage_key_prefix: str | None = None
     ttl_days: int | None = None
     partition_column: str | None = None
+    correlation_id: str | None = None
 
 
 @dataclass
@@ -191,6 +192,7 @@ class IngestJob:
     error: str | None = None
     created_at: int | None = None
     updated_at: int | None = None
+    correlation_id: str | None = None
 
 
 @dataclass
