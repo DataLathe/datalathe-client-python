@@ -36,6 +36,6 @@ jobs:
         with:
           version: "1.0.0-beta.15"
           verb: call
-          module: github.com/DataLathe/datalathe-backend/dagger@5f81c598763a3c4bd8fc32ad4e026fb68359e827
+          module: github.com/DataLathe/datalathe-backend/dagger@0cf659c05c289bcf2da695aeffaf11274354bb1a
           args: integration-python --python-client=.
           cloud-token: ${{ secrets.DAGGER_CLOUD_TOKEN }}
