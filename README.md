@@ -426,17 +426,28 @@ client = DatalatheClient(
 When the engine sheds load it returns HTTP 429 with a `Retry-After` header,
 having done no work on the request, so the client transparently retries 429
 responses for every method (up to 3 attempts by default, honoring
-`Retry-After`). Network errors are never retried. Tune or disable with:
+`Retry-After`). Network errors are never retried.
+
+The client retries an HTTP 503 the same way, under the same budget, only when
+the response has a `Retry-After` header that is a whole number of seconds no
+greater than 30. An engine that is shutting down during a deploy answers new
+ingest requests with such a 503 (`SHUTTING_DOWN`, `Retry-After: 5`) before
+doing any work, and the retry reaches its replacement. A 503 with no
+`Retry-After` header, a value that isn't a whole number of seconds, or a wait
+longer than 30 seconds (for example `LICENSE_UNAVAILABLE`, `Retry-After: 60`)
+surfaces at once as a `DatalatheApiError`.
+
+Tune or disable both with:
 
 ```python
 client = DatalatheClient(
     base_url="http://localhost:3000",
-    retry_on_429=False,  # default: True
-    max_retries=5,       # 429 retry budget (default: 3)
+    retry_on_429=False,  # default: True; False also disables 503 retries
+    max_retries=5,       # shared 429 and 503 retry budget (default: 3)
 )
 ```
 
-If retries are exhausted, the final 429 surfaces as a normal
+If retries are exhausted, the final 429 or 503 surfaces as a normal
 `DatalatheApiError`.
 
 ## Error Handling

@@ -12,6 +12,7 @@ from urllib.parse import quote, urlencode
 
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.exceptions import MaxRetryError, ResponseError
 from urllib3.util.retry import Retry
 
 from datalathe.commands.command import DatalatheCommand
@@ -132,6 +133,53 @@ class _IdleExpiringHTTPAdapter(HTTPAdapter):
                 self._last_used = time.monotonic()
 
 
+RETRYABLE_503_MAX_RETRY_AFTER_SECONDS = 30
+"""The longest ``Retry-After`` wait for which a 503 response is retried.
+
+The engine answers 503 with a ``Retry-After`` header when it rejects a request
+before doing any work. A short wait means a replacement engine is about to
+take over, so a retry is likely to succeed. A longer wait, or a 503 with no
+usable ``Retry-After``, goes back to the caller at once.
+"""
+
+_RETRY_AFTER_SECONDS_PATTERN = re.compile(r"\s*([0-9]+)\s*")
+
+
+def _is_retryable_503(response) -> bool:
+    value = response.headers.get("Retry-After")
+    if value is None:
+        return False
+    match = _RETRY_AFTER_SECONDS_PATTERN.fullmatch(value)
+    return match is not None and int(match.group(1)) <= RETRYABLE_503_MAX_RETRY_AFTER_SECONDS
+
+
+class _RejectedRequestRetry(Retry):
+    """Retries 429 responses, and 503 responses that ask for a short wait."""
+
+    def is_retry(self, method, status_code, has_retry_after=False):
+        return super().is_retry(method, status_code, has_retry_after) or (
+            status_code == 503 and has_retry_after
+        )
+
+    def increment(self, method=None, url=None, response=None, error=None, _pool=None, _stacktrace=None):
+        if (
+            error is None
+            and response is not None
+            and response.status == 503
+            and not _is_retryable_503(response)
+        ):
+            reason = ResponseError(ResponseError.SPECIFIC_ERROR.format(status_code=503))
+            raise MaxRetryError(_pool, url, reason)
+        return super().increment(
+            method=method,
+            url=url,
+            response=response,
+            error=error,
+            _pool=_pool,
+            _stacktrace=_stacktrace,
+        )
+
+
 logger = logging.getLogger(__name__)
 
 CORRELATION_ID_HEADER = "X-Correlation-ID"
@@ -147,6 +195,18 @@ class DatalatheClient:
         retry_on_429: bool = True,
         max_retries: int = 3,
     ):
+        """Creates a client for the engine at ``base_url``.
+
+        Args:
+            base_url: Root URL of the engine.
+            headers: Headers sent with every request.
+            timeout: Per-request timeout in seconds.
+            retry_on_429: If ``True`` (the default), retry a 429 response, and
+                a 503 response whose ``Retry-After`` header is a whole number
+                of seconds no greater than 30. ``False`` disables both.
+            max_retries: Retry budget for one request, shared by 429 and 503
+                responses. ``0`` disables both.
+        """
         self._base_url = base_url.rstrip("/")
         self._headers = headers or {}
         self._timeout = timeout
@@ -156,7 +216,7 @@ class DatalatheClient:
         self._extra_headers: dict[str, str] = {}
         retry = None
         if retry_on_429:
-            retry = Retry(
+            retry = _RejectedRequestRetry(
                 total=None,
                 connect=0,
                 read=0,
